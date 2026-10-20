@@ -409,7 +409,7 @@ not compared.)
 | DEF-23 | Resolved, with a changed order: the cell (structure, canonical), then the hash, then the descriptor (structure, canonical), then substitution; only referenced arguments are examined; 10.2 has a "unit" marker. |
 | DEF-24 | Resolved: 7 has a "Check order" paragraph. |
 | DEF-25 | Resolved: units.md 1 says `{"arg": "Bad"}` is `E_CANON_UNIT` and other shapes are `E_SCHEMA` in step 2. |
-| DEF-26 | Resolved in units.md 2.4 (year `0000`, the 64 limit is `E_CANON_UNIT`, an index unit is a literal but not a rate side). SPEC 7.1 still calls a literal "a string listed in units.md". |
+| DEF-26 | Resolved in units.md 2.4 (year `0000`, the 64 limit is `E_CANON_UNIT`, an index unit is a literal but not a rate side); SPEC 7.1 names index units as literals since commit 1400247. |
 | DEF-27 | Resolved: verification never resolves units (7.1, units.md 3). |
 | DEF-28 | Resolved, with a change: content for a non-blob value is now `E_SCHEMA`; 7.7 runs last; `blob_checked` reports it. But see DEF-35. |
 | DEF-29 | Resolved, with a change: integer members are written `0` or `[1-9][0-9]*`; `30.0`, `3e1`, `-0` are `E_ENVELOPE`. The check needs the number's source text, which this library now reads. |
@@ -420,6 +420,18 @@ not compared.)
 | DEF-34 | Open until the tag exists. |
 
 New entries for `2a77580`: DEF-35 to DEF-38, at the end of this section.
+
+**Commit 1400247** (vectors and wording only; units.md and the schemas are unchanged, so the embedded
+unit list is the same): the two blob receipt vectors carry `"blob_checked": true`, 7.1 names index
+units as literals, and 5.5 says that a malformed request description is the caller's error and that
+outcomes without a receipt have nothing to bind. This library conforms (317 vectors, no code change).
+
+| Entry | Status at 1400247 |
+|---|---|
+| DEF-35 | Resolved: the vectors carry `blob_checked` (it was a generator bug). |
+| DEF-36 | Resolved: 5.5 now says what this library does. The exact form of a request (64 lowercase hex, an instant) is still implied rather than stated. |
+| DEF-37 | Decided by the spec author as written: the binding, `asof` included, applies to `stale` too. Closed. |
+| DEF-38 | Open (minor): what `parse` does with a type outside the six is still implied. |
 
 ## Entries written at commit 0c7accc
 

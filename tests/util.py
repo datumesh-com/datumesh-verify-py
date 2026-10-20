@@ -75,8 +75,8 @@ def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             exp[k] = v[k]
         if v["kind"] == "receipt" and "blob_hex" in v:
-            # SPEC 11 (2a77580): "blob_checked (true) when blob_hex is given". The vector files
-            # do not carry the field (DEFECTS.md DEF-35), so it is derived from that rule.
+            # SPEC 11: "blob_checked (true) when blob_hex is given". The vector files carry it since
+            # spec commit 1400247 (DEFECTS.md DEF-35); the rule is the fallback.
             exp["blob_checked"] = v.get("blob_checked", True)
     return exp
 
