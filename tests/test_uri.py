@@ -29,6 +29,7 @@ class UriTest(unittest.TestCase):
                 self.assertEqual(parse_uri(format_uri(v["object"]), v["signature"]), v["object"])
                 n += 1
         self.assertEqual(n, 11)
+        self.assertEqual(len(vectors_of("uri", False)), 27)
 
     def test_invalid_vectors(self) -> None:
         for v in vectors_of("uri", False):
@@ -50,17 +51,22 @@ class UriTest(unittest.TestCase):
             format_uri({"args": {}, "fn": "Pi", "ns": "math.example"})
         self.assertEqual(cm.exception.code, "E_CANON_NAME")
 
-    def test_parse_validates_signature(self) -> None:
-        bad = {"args": {"n": {"type": "number", "unit": "1", "valid": True}}, "returns": "boolean"}
+    def test_parse_takes_signature_as_given(self) -> None:
+        # SPEC 5.4 (2a77580): the signature comes from a checked descriptor and is not checked again.
+        lax = {"args": {"n": {"type": "number", "valid": True}}, "returns": "number"}
+        self.assertEqual(parse_uri("cell://math.example/f?n=1", lax),
+                         {"args": {"n": {"type": "number", "value": "1"}}, "fn": "f", "ns": "math.example"})
+        # A type outside the six still cannot type a value.
         with self.assertRaises(DatumeshError) as cm:
-            parse_uri("cell://math.example/f?n=1", bad)
+            parse_uri("cell://math.example/f?n=1", {"args": {"n": {"type": "decimal", "valid": False}}})
         self.assertEqual(cm.exception.code, "E_CANON_TYPE")
+        # Only a signature whose argument types cannot be read at all is a caller error.
+        for bad in (None, {}, {"args": []}, {"args": {"n": {}}}, {"args": {"n": {"type": 5}}}):
+            with self.subTest(bad=bad), self.assertRaises(TypeError):
+                parse_uri("cell://math.example/f?n=1", bad)  # type: ignore[arg-type]
         with self.assertRaises(TypeError):
             parse_uri(b"cell://math.example/pi", {"args": {}, "returns": "boolean"})  # type: ignore[arg-type]
-        # spec-0.2.0: a number without a unit is not a canonical signature (SPEC 7, 7.1).
-        with self.assertRaises(DatumeshError) as cm:
-            parse_uri("cell://math.example/pi", {"args": {}, "returns": "number"})
-        self.assertEqual(cm.exception.code, "E_CANON_UNIT")
+
 
     def test_https_mapping(self) -> None:
         u = "cell://rates.example.org/fx_rate?base=EUR&date=*&quote=USD"

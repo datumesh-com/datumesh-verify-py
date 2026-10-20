@@ -13,13 +13,16 @@ import datumesh
 from datumesh import EnvelopeResult, check_envelope
 
 STATUS = {"ok": [200], "stale": [200], "not_covered": [404], "unlicensed": [403], "payment_required": [402],
-          "rate_limited": [429], "error": list(range(500, 600))}
+          "rate_limited": [429], "bad_request": [400], "error": list(range(500, 600))}
 PROBE_STATUSES = [100, 200, 201, 204, 301, 302, 304, 400, 401, 402, 403, 404, 409, 429, 499, 500, 503, 599, 600, 0, -200]
 
 PRIMARY = next(v for v in vectors_of("envelope", True) if v["id"] == "envelope/ok-primary")
 KEYS = env_keys(PRIMARY["keys"])
 R = json.loads(PRIMARY["input"])["receipt"]
 R_HASH = PRIMARY["receipt_hash"]
+REQ = PRIMARY["request"]
+CELL_ID = hashlib.sha256(datumesh.jcs(R["cell"])).hexdigest()
+OTHER = next(v for v in vectors_of("envelope", True) if v["id"] == "envelope/ok-primary-namespace-path")
 SB = "f670bbe9ced52884b8187be1b2c1df15470079356998eb291bed9910432ca5c9"
 QUOTE = {"amount": "0.05", "authorise": "https://mesh.example/pay", "currency": "EUR"}
 
@@ -50,14 +53,14 @@ class EnvelopeVectorTest(unittest.TestCase):
         n = 0
         for v in vectors_of("envelope"):
             with self.subTest(v["id"]):
-                res = check_envelope(v["status"], v["input"], env_keys(v["keys"]))
+                res = check_envelope(v["status"], v["input"], env_keys(v["keys"]), v["request"])
                 if v["valid"]:
                     self.assertEqual((res.ok, res.code, res.outcome, res.trust, res.receipt_hash),
                                      (True, "OK", v["outcome"], v.get("trust"), v.get("receipt_hash")))
                 else:
                     self.assertEqual((res.ok, res.code), (False, v["error"]))
                 n += 1
-        self.assertEqual(n, 35)
+        self.assertEqual(n, 48)
 
     def test_valid_bodies_with_wrong_status(self) -> None:
         total = 0
@@ -69,7 +72,7 @@ class EnvelopeVectorTest(unittest.TestCase):
                 if status in right:
                     continue
                 with self.subTest(v["id"], status=status):
-                    res = check_envelope(status, v["input"], keys)
+                    res = check_envelope(status, v["input"], keys, v["request"])
                     self.assertEqual((res.ok, res.code), (False, "E_ENVELOPE"))
                     self.assertEqual(res.path, "status")
                     total += 1
@@ -79,7 +82,7 @@ class EnvelopeVectorTest(unittest.TestCase):
     def test_status_must_be_an_int(self) -> None:
         for status in ("200", 200.0, None, True):
             with self.subTest(status=status):
-                self.assertEqual(check_envelope(status, PRIMARY["input"], KEYS).code, "E_ENVELOPE")  # type: ignore
+                self.assertEqual(check_envelope(status, PRIMARY["input"], KEYS, REQ).code, "E_ENVELOPE")  # type: ignore
 
 
 class EnvelopeRulesTest(unittest.TestCase):
@@ -87,10 +90,18 @@ class EnvelopeRulesTest(unittest.TestCase):
     CASES = [
         # integral JSON numbers (SPEC 5.5: "JSON numbers with integral values, at most 2^53 - 1")
         (200, raw_with("age_seconds", "0"), "OK"),
-        (200, raw_with("age_seconds", "30.0"), "OK"),
-        (200, raw_with("age_seconds", "3e1"), "OK"),
-        (200, raw_with("age_seconds", "1.0e0"), "OK"),
-        (200, raw_with("age_seconds", "-0"), "OK"),
+        (200, raw_with("age_seconds", "30"), "OK"),
+        (200, raw_with("age_seconds", "30.0"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "3e1"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "3E1"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "1.0e0"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "-0"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "-0.0"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "0.0"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "0.99999999999999999999"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "1e-400"), "E_ENVELOPE"),
+        (200, raw_with("age_seconds", "01"), "E_PARSE_JSON"),
+        (200, raw_with("age_seconds", " 30 "), "OK"),
         (200, raw_with("age_seconds", "9007199254740991"), "OK"),
         (200, raw_with("age_seconds", "9007199254740992"), "E_ENVELOPE"),
         (200, raw_with("age_seconds", "-1"), "E_ENVELOPE"),
@@ -99,7 +110,10 @@ class EnvelopeRulesTest(unittest.TestCase):
         (200, raw_with("age_seconds", '"30"'), "E_ENVELOPE"),
         (200, raw_with("age_seconds", "null"), "E_ENVELOPE"),
         (200, raw_with("age_seconds", "1e400"), "E_PARSE_JSON"),
-        (429, raw_with("retry_after_seconds", "30.0", "rate_limited"), "OK"),
+        (429, raw_with("retry_after_seconds", "30", "rate_limited"), "OK"),
+        (429, raw_with("retry_after_seconds", "30.0", "rate_limited"), "E_ENVELOPE"),
+        (429, raw_with("retry_after_seconds", "-0", "rate_limited"), "E_ENVELOPE"),
+        (429, raw_with("retry_after_seconds", "9007199254740991", "rate_limited"), "OK"),
         (429, raw_with("retry_after_seconds", "-1", "rate_limited"), "E_ENVELOPE"),
         (429, raw_with("retry_after_seconds", "9007199254740992", "rate_limited"), "E_ENVELOPE"),
         # superseded_by and reason
@@ -139,7 +153,20 @@ class EnvelopeRulesTest(unittest.TestCase):
         (402, quote(currency="eur"), "E_ENVELOPE"),
         (402, quote(currency={"arg": "x"}), "E_ENVELOPE"),
         # error codes
-        (500, {"outcome": "error", "error": "E_ENVELOPE"}, "OK"),
+        (500, {"outcome": "error", "error": "E_ENVELOPE"}, "E_ENVELOPE"),
+        (500, {"outcome": "error", "error": "E_PARSE_URI"}, "OK"),
+        # bad_request (SPEC 5.5, 2a77580): status 400 and a code parse can raise
+        (400, {"outcome": "bad_request", "error": "E_PARSE_URI"}, "OK"),
+        (400, {"outcome": "bad_request", "error": "E_ARG_UNKNOWN"}, "OK"),
+        (400, {"outcome": "bad_request", "error": "E_CANON_BLOB"}, "OK"),
+        (400, {"outcome": "bad_request", "error": "E_CANON_UNIT"}, "E_ENVELOPE"),
+        (400, {"outcome": "bad_request", "error": "E_SCHEMA"}, "E_ENVELOPE"),
+        (400, {"outcome": "bad_request", "error": "E_SIGNATURE"}, "E_ENVELOPE"),
+        (400, {"outcome": "bad_request", "error": "E_ENVELOPE"}, "E_ENVELOPE"),
+        (400, {"outcome": "bad_request"}, "E_ENVELOPE"),
+        (400, {"outcome": "bad_request", "error": "E_PARSE_URI", "x": 1}, "E_ENVELOPE"),
+        (500, {"outcome": "bad_request", "error": "E_PARSE_URI"}, "E_ENVELOPE"),
+        (400, {"outcome": "error", "error": "E_PARSE_URI"}, "E_ENVELOPE"),
         (500, {"outcome": "error", "error": "E_BLOB_MISMATCH"}, "OK"),
         (500, {"outcome": "error", "error": "OK"}, "E_ENVELOPE"),
         (500, {"outcome": "error", "error": "E_PROBE"}, "E_ENVELOPE"),
@@ -180,36 +207,80 @@ class EnvelopeRulesTest(unittest.TestCase):
         for status, body, code in self.CASES:
             text = body if isinstance(body, str) else json.dumps(body)
             with self.subTest(text[:100], status=status):
-                res = check_envelope(status, text, KEYS)
+                res = check_envelope(status, text, KEYS, REQ)
                 self.assertEqual(res.code, code, res)
                 self.assertEqual(res.ok, code == "OK")
 
     def test_no_keys_for_the_signer(self) -> None:
-        self.assertEqual(check_envelope(200, json.dumps(ok()), []).code, "E_KEY_UNAVAILABLE")
-        self.assertEqual(check_envelope(200, json.dumps(ok()), {}).code, "E_KEY_UNKNOWN")  # {} maps no key ids
+        self.assertEqual(check_envelope(200, json.dumps(ok()), [], REQ).code, "E_KEY_UNAVAILABLE")
+        self.assertEqual(check_envelope(200, json.dumps(ok()), {}, REQ).code, "E_KEY_UNKNOWN")  # {} maps no key ids
 
     def test_result(self) -> None:
-        res = check_envelope(200, PRIMARY["input"], KEYS)
+        res = check_envelope(200, PRIMARY["input"], KEYS, REQ)
         self.assertEqual(res, EnvelopeResult(True, "OK", "ok", "primary", R_HASH, res.detail, None))
         self.assertEqual(R_HASH, hashlib.sha256(datumesh.receipt_payload(R)).hexdigest())
-        res = check_envelope(404, '{"outcome":"not_covered"}', {})
+        res = check_envelope(404, '{"outcome":"not_covered"}', {}, REQ)
         self.assertEqual((res.ok, res.outcome, res.trust, res.receipt_hash), (True, "not_covered", None, None))
-        res = check_envelope(200, json.dumps(ok(trust="trusted")), KEYS)
+        res = check_envelope(200, json.dumps(ok(trust="trusted")), KEYS, REQ)
         self.assertEqual((res.ok, res.code, res.path), (False, "E_ENVELOPE", "$.trust"))
-        res = check_envelope(200, json.dumps(ok(receipt=dict(R, value="1.50"))), KEYS)
+        res = check_envelope(200, json.dumps(ok(receipt=dict(R, value="1.50"))), KEYS, REQ)
         self.assertEqual((res.code, res.path), ("E_CANON_NUMBER", "$.receipt.value"))
 
     def test_never_raises_on_bad_input(self) -> None:
         bodies = [b"\xff", b"{", b"[" * 100000, "{\"outcome\": \"ok\", \"receipt\": {}}", json.dumps(ok(receipt={}))]
         for body in bodies:
             for status in (200, 404):
-                self.assertIsInstance(check_envelope(status, body, KEYS), EnvelopeResult)
+                self.assertIsInstance(check_envelope(status, body, KEYS, REQ), EnvelopeResult)
 
     def test_wrong_argument_types(self) -> None:
         with self.assertRaises(TypeError):
-            check_envelope(200, {"outcome": "not_covered"}, {})  # type: ignore[arg-type]
+            check_envelope(200, {"outcome": "not_covered"}, {}, REQ)  # type: ignore[arg-type]
         with self.assertRaises(TypeError):
-            check_envelope(200, '{"outcome":"not_covered"}', 5)  # type: ignore[arg-type]
+            check_envelope(200, '{"outcome":"not_covered"}', 5, REQ)  # type: ignore[arg-type]
+        for bad in (None, "f566", [CELL_ID], {}, {"cell_id": 5}, {"cell_id": CELL_ID.upper()},
+                    {"cell_id": CELL_ID, "asof": "2024-03-16"}, {"cell_id": CELL_ID, "x": 1},
+                    {"cell_id": CELL_ID, "asof": None}):
+            with self.subTest(request=bad), self.assertRaises((TypeError, ValueError)):
+                check_envelope(200, PRIMARY["input"], KEYS, bad)  # type: ignore[arg-type]
+
+
+class RequestBindingTest(unittest.TestCase):
+    """SPEC 5.5 step 5: the receipt answers the request (same cell id; same asof when one was asked for)."""
+
+    def code(self, body: dict, request: dict, status: int = 200) -> str:
+        return check_envelope(status, json.dumps(body), KEYS, request).code
+
+    def test_cell_id_and_asof(self) -> None:
+        self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": R["asof"]}), "OK")
+        self.assertEqual(self.code(ok(), {"cell_id": CELL_ID}), "OK")  # no asof asked: the mesh's now
+        self.assertEqual(self.code(ok(), {"cell_id": "0" * 64}), "E_ENVELOPE")
+        self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}), "E_ENVELOPE")
+        self.assertEqual(self.code(stale(), {"cell_id": "0" * 64}), "E_ENVELOPE")
+        self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}),
+                         "E_ENVELOPE")
+        res = check_envelope(200, json.dumps(ok()), KEYS, {"cell_id": "0" * 64})
+        self.assertEqual(res.path, "$.receipt.cell")
+        res = check_envelope(200, json.dumps(ok()), KEYS, {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"})
+        self.assertEqual(res.path, "$.receipt.asof")
+
+    def test_order(self) -> None:
+        # step 4 (receipt codes) before step 5, step 5 before step 6 (trust, superseded_by): all E_ENVELOPE
+        # except the receipt's own failures.
+        self.assertEqual(self.code(ok(receipt=dict(R, summary="x")), {"cell_id": "0" * 64}), "E_SIGNATURE")
+        res = check_envelope(200, json.dumps(ok(trust="verified")), KEYS, {"cell_id": "0" * 64})
+        self.assertEqual((res.code, res.path), ("E_ENVELOPE", "$.receipt.cell"))
+        # the cell id is of the receipt's cell: another valid receipt does not answer this request
+        other = json.loads(OTHER["input"])
+        self.assertEqual(check_envelope(200, OTHER["input"], env_keys(OTHER["keys"]), REQ).code, "E_ENVELOPE")
+        self.assertEqual(check_envelope(200, OTHER["input"], env_keys(OTHER["keys"]),
+                                        {"cell_id": hashlib.sha256(datumesh.jcs(other["receipt"]["cell"])).hexdigest()}
+                                        ).code, "OK")
+
+    def test_outcomes_without_receipt_ignore_the_request(self) -> None:
+        for status, body in ((404, {"outcome": "not_covered"}), (403, {"outcome": "unlicensed"}),
+                             (400, {"outcome": "bad_request", "error": "E_ARG_MISSING"}),
+                             (500, {"outcome": "error", "error": "E_FN_UNAVAILABLE"})):
+            self.assertEqual(self.code(body, {"cell_id": "0" * 64}, status), "OK")
 
 
 if __name__ == "__main__":

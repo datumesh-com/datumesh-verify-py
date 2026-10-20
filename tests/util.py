@@ -74,6 +74,10 @@ def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
             if v["kind"] == "envelope" and k != "outcome" and k not in v:
                 continue
             exp[k] = v[k]
+        if v["kind"] == "receipt" and "blob_hex" in v:
+            # SPEC 11 (2a77580): "blob_checked (true) when blob_hex is given". The vector files
+            # do not carry the field (DEFECTS.md DEF-35), so it is derived from that rule.
+            exp["blob_checked"] = v.get("blob_checked", True)
     return exp
 
 

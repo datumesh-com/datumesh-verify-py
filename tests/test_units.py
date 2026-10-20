@@ -112,7 +112,8 @@ class DescriptorUnitTest(unittest.TestCase):
         # added whitespace
         " EUR", "EUR ", "E UR", "\tEUR", "EUR\n", " 1", "1 ", "deg C", "m / s", " EUR",
         # other spellings and non-units
-        "°C", "℃", "C", "degF", "USD/EUR", "EUR/USD", "m/s2", "km/h", "1.0", "01", "%", "per cent", "",
+        "°C", "℃", "C", "degF", "USD/EUR", "EUR/USD", "m/s2", "W/m\u00b2", "W/m^2", "KM/H", "Km/h", "kph",
+        "Mm", "MM", "hpa", "HPa", "mbar", "per mille", "\u2030", "1.0", "01", "%", "per cent", "",
         "XXX", "ABC", "dollars", "index", "index:", "kWh ", "k‍Wh",
     ]
 
@@ -227,7 +228,7 @@ class ResolutionTest(unittest.TestCase):
                 got = unit_code(obj["descriptor"], obj["cell"])
                 self.assertEqual(got, v["unit"] if v["valid"] else v["error"])
                 n += 1
-        self.assertEqual(n, 10)
+        self.assertEqual(n, 13)
 
     def test_resolution_cases(self) -> None:
         # Codes and results confirmed against the reference tool (see DEFECTS.md for the unstated rules).
@@ -275,15 +276,18 @@ class ResolutionTest(unittest.TestCase):
             (REF, dict(good, fn_hash="A" * 64), "E_CANON_HEX"),
             (bad_unit, cell(bad_unit, {"c": sv("x")}), "E_CANON_UNIT"),
             (bad_unit, dict(good, fn_hash="0" * 64), "E_FN_HASH_MISMATCH"),
-            (bad_schema, dict(good, fn_hash="0" * 64), "E_SCHEMA"),
-            (bad_schema, dict(good, ns="Bad"), "E_SCHEMA"),
+            # spec 2a77580 (units.md 3): the cell, then the hash, then the descriptor
+            (bad_schema, dict(good, fn_hash="0" * 64), "E_FN_HASH_MISMATCH"),
+            (bad_schema, dict(good, ns="Bad"), "E_CANON_NAME"),
+            (bad_schema, cell(bad_schema, {"c": sv("USD")}), "E_SCHEMA"),
             (bad_unit, dict(cell(bad_unit, {"c": sv("x")}), ns="Bad"), "E_CANON_NAME"),
             (REF, dict(good, ns="Bad"), "E_CANON_NAME"),
             (REF, dict(good, fn_hash="0" * 64, args={"c": {"type": "number", "value": "1.50"}}), "E_CANON_NUMBER"),
             (bad_lang, good, "E_FN_HASH_MISMATCH"),
             (bad_lang, cell(bad_lang, {"c": sv("USD")}), "E_CANON_NAME"),
             ("x", good, "E_PARSE_JSON"),  # text is parsed as JSON
-            ("\"x\"", dict(good, ns="Bad"), "E_SCHEMA"),
+            ("\"x\"", dict(good, ns="Bad"), "E_CANON_NAME"),
+            ("\"x\"", good, "E_FN_HASH_MISMATCH"),
             (REF, {"args": {}, "fn": "f", "ns": "a.example"}, "E_SCHEMA"),
             (REF, dict(good, ns=5), "E_SCHEMA"),
             ('{"a": 1, "a": 2}', good, "E_PARSE_DUPLICATE_KEY"),
@@ -299,10 +303,12 @@ class ResolutionTest(unittest.TestCase):
         resolved_unit(FX, c)
         self.assertEqual((FX, c), before)
 
-    def test_non_objects_are_schema_errors(self) -> None:
+    def test_non_objects(self) -> None:
+        # The cell is checked first, then the hash, then the descriptor (units.md 3).
         for bad in (5, None, 1.5, [], True):
             with self.subTest(bad=bad):
-                self.assertEqual(unit_code(bad, cell(REF, {"c": sv("USD")})), "E_SCHEMA")
+                self.assertEqual(unit_code(bad, cell(REF, {"c": sv("USD")})), "E_FN_HASH_MISMATCH")
+                self.assertEqual(unit_code(bad, dict(cell(REF, {"c": sv("USD")}), fn_hash=fh(bad))), "E_SCHEMA")
                 self.assertEqual(unit_code(REF, bad), "E_SCHEMA")
 
 

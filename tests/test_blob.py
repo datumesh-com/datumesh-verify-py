@@ -39,11 +39,13 @@ class BlobContentTest(unittest.TestCase):
 
     def test_unmodified_content_passes(self) -> None:
         res = verify(BLOB["input"], KEYS, blob=CONTENT)
-        self.assertEqual((res.ok, res.code, res.level, res.hash), (True, "OK", "signed", BLOB["sha256"]))
+        self.assertEqual((res.ok, res.code, res.level, res.hash, res.blob_checked),
+                         (True, "OK", "signed", BLOB["sha256"], True))
         for form in (bytearray(CONTENT), memoryview(CONTENT)):
-            self.assertTrue(verify(BLOB["input"], KEYS, blob=form).ok)
+            self.assertTrue(verify(BLOB["input"], KEYS, blob=form).blob_checked)
         # Without content, step 7.7 does not run.
-        self.assertTrue(verify(BLOB["input"], KEYS).ok)
+        res = verify(BLOB["input"], KEYS)
+        self.assertEqual((res.ok, res.blob_checked), (True, False))
 
     def test_every_bit_flip_of_the_content(self) -> None:
         total = 0
@@ -56,6 +58,7 @@ class BlobContentTest(unittest.TestCase):
                 self.assertEqual(res.code, "E_BLOB_MISMATCH", f"byte {i} bit {bit}")
                 self.assertFalse(res.ok)
                 self.assertIsNone(res.level)
+                self.assertFalse(res.blob_checked)
                 self.assertEqual(res.hash, BLOB["sha256"])
         print(f"\nbit flips of blob content: {total} run, {total} rejected with E_BLOB_MISMATCH", file=sys.stderr)
 
@@ -77,16 +80,29 @@ class BlobContentTest(unittest.TestCase):
         self.assertEqual(verify(BLOB["input"], [], blob=b"x").code, "E_KEY_UNAVAILABLE")
         self.assertEqual(verify(BLOB["input"], {}, blob=b"x").code, "E_KEY_UNKNOWN")  # {} maps no key ids
 
-    def test_content_for_a_receipt_that_is_not_a_blob_is_ignored(self) -> None:
-        # Confirmed against the reference tool: blob content given for a number receipt is not checked.
-        res = verify(STORED["input"], env_keys(STORED["keys"]), blob=b"\x00")
-        self.assertEqual((res.ok, res.level), (True, "signed"))
+    def test_content_for_a_value_that_is_not_a_blob(self) -> None:
+        # SPEC 10.1 step 7.7 (2a77580): content supplied for a value that is not a blob is E_SCHEMA.
+        keys = env_keys(STORED["keys"])
+        for content in (b"\x00", b"", CONTENT):
+            res = verify(STORED["input"], keys, blob=content)
+            self.assertEqual((res.ok, res.code, res.path, res.blob_checked, res.hash),
+                             (False, "E_SCHEMA", "$.type", False, STORED["sha256"]))
+        # Earlier steps still come first.
+        self.assertEqual(verify(STORED["input"], [], blob=b"x").code, "E_KEY_UNAVAILABLE")
+        # With recomputation, 7.1-7.6 come first, then 7.7.
+        lin = next(v for v in vectors_of("receipt", True) if v["id"] == "receipt/computed-with-lineage")
+        lk = env_keys(lin["keys"])
+        self.assertEqual(verify(lin["input"], lk, lin["recompute"], b"x").code, "E_SCHEMA")
+        wrong = dict(lin["recompute"], value={"type": "number", "value": "1"})
+        self.assertEqual(verify(lin["input"], lk, wrong, b"x").code, "E_VALUE_MISMATCH")
 
     def test_with_recompute(self) -> None:
         value = json.loads(BLOB["input"])["value"]
         rc = {"descriptor": DESCRIPTOR, "value": {"type": "blob", "value": value}}
-        self.assertEqual(verify(BLOB["input"], KEYS, rc, CONTENT).level, "recomputed")
-        self.assertEqual(verify(BLOB["input"], KEYS, rc).level, "recomputed")
+        res = verify(BLOB["input"], KEYS, rc, CONTENT)
+        self.assertEqual((res.level, res.blob_checked), ("recomputed", True))
+        res = verify(BLOB["input"], KEYS, rc)
+        self.assertEqual((res.level, res.blob_checked), ("recomputed", False))
         # Steps 7.1-7.6 come before 7.7 (reference tool agrees).
         self.assertEqual(verify(BLOB["input"], KEYS, rc, b"x").code, "E_BLOB_MISMATCH")
         wrong = dict(rc, value={"type": "blob", "value": "0" * 64 + ":0:text/csv"})

@@ -16,9 +16,9 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        self.assertEqual(sum(counts.values()), 290, counts)
-        self.assertEqual(counts["unit"], 10, counts)
-        self.assertEqual(counts["envelope"], 35, counts)
+        self.assertEqual(sum(counts.values()), 317, counts)
+        self.assertEqual(counts["unit"], 13, counts)
+        self.assertEqual(counts["envelope"], 48, counts)
         # every vector's id is its path, and every kind is one the runner knows
         for v in load_vectors():
             self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",
@@ -73,6 +73,7 @@ class ConformanceTest(unittest.TestCase):
                     self.assertEqual(res.code, "OK")
                     self.assertEqual(res.level, v["level"])
                     self.assertEqual(res.hash, v["sha256"])
+                    self.assertEqual(res.blob_checked, "blob_hex" in v)
                     self.assertEqual(res.key, json.loads(v["input"])["computed_by"])
                     self.assertIsNone(res.path)
                     # bytes input and parsed input give the same result
@@ -87,6 +88,7 @@ class ConformanceTest(unittest.TestCase):
                     self.assertEqual(res.code, v["error"])
                     self.assertIsNone(res.level)
                     self.assertIsNone(res.key)
+                    self.assertFalse(res.blob_checked)
 
     def test_hash_helpers(self) -> None:
         for v in vectors_of("cell", True):
@@ -115,9 +117,10 @@ class ConformanceTest(unittest.TestCase):
     def test_envelope_vectors_through_check_envelope(self) -> None:
         for v in vectors_of("envelope"):
             with self.subTest(v["id"]):
-                res = datumesh.check_envelope(v["status"], v["input"], env_keys(v["keys"]))
+                res = datumesh.check_envelope(v["status"], v["input"], env_keys(v["keys"]), v["request"])
                 self.assertIsInstance(res, datumesh.EnvelopeResult)
-                self.assertEqual(datumesh.check_envelope(v["status"], v["input"].encode(), env_keys(v["keys"])), res)
+                self.assertEqual(datumesh.check_envelope(v["status"], v["input"].encode(), env_keys(v["keys"]),
+                                                         v["request"]), res)
                 if v["valid"]:
                     self.assertTrue(res.ok, res)
                     self.assertEqual((res.code, res.outcome, res.trust, res.receipt_hash, res.path),
