@@ -1,0 +1,105 @@
+"""Test 1: conformance over every vector in spec/vectors (through the API and the runner)."""
+
+from __future__ import annotations
+
+import collections
+import json
+import subprocess
+import sys
+import unittest
+
+from util import ROOT, env_keys, expected_output, load_vectors, runner, vectors_of
+
+import datumesh
+
+
+class ConformanceTest(unittest.TestCase):
+    def test_vector_count(self) -> None:
+        counts = collections.Counter(v["kind"] for v in load_vectors())
+        self.assertEqual(sum(counts.values()), 183, counts)
+
+    def test_every_vector_in_process(self) -> None:
+        run = runner().run_vector
+        tally = collections.Counter()
+        for v in load_vectors():
+            with self.subTest(v["id"]):
+                got = run(v)
+                self.assertEqual(got, expected_output(v))
+                tally[(v["kind"], "valid" if v["valid"] else "invalid")] += 1
+        print("\nconformance (in-process): " + ", ".join(f"{k[0]}/{k[1]} {n}" for k, n in sorted(tally.items())),
+              file=sys.stderr)
+
+    def test_runner_script(self) -> None:
+        vectors = load_vectors()
+        feed = "\n".join(json.dumps(v) for v in vectors) + "\n"
+        proc = subprocess.run([sys.executable, str(ROOT / "tools" / "run_vectors.py")], input=feed.encode(),
+                              capture_output=True, check=True)
+        lines = proc.stdout.decode("ascii").split("\n")
+        self.assertEqual(lines[-1], "")
+        self.assertEqual(len(lines) - 1, len(vectors))
+        passed = collections.Counter()
+        failed = collections.Counter()
+        for v, line in zip(vectors, lines):
+            got = json.loads(line)
+            key = (v["kind"], "valid" if v["valid"] else "invalid")
+            if got == expected_output(v):
+                passed[key] += 1
+            else:
+                failed[key] += 1
+                self.fail(f"{v['id']}: expected {expected_output(v)}, got {got}")
+        print("\nconformance (runner): " + ", ".join(f"{k[0]}/{k[1]} {n} pass" for k, n in sorted(passed.items()))
+              + f"; failures {sum(failed.values())}", file=sys.stderr)
+
+    def test_runner_keeps_alignment_on_garbage(self) -> None:
+        feed = b'{"id": "x/garbage", "kind": "receipt", "valid": false, "input": 5}\nnot json\n'
+        proc = subprocess.run([sys.executable, str(ROOT / "tools" / "run_vectors.py")], input=feed,
+                              capture_output=True, check=True)
+        lines = proc.stdout.decode().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(json.loads(lines[0])["id"], "x/garbage")
+
+    def test_receipts_through_verify(self) -> None:
+        for v in vectors_of("receipt"):
+            with self.subTest(v["id"]):
+                res = datumesh.verify(v["input"], env_keys(v["keys"]), v.get("recompute"))
+                if v["valid"]:
+                    self.assertTrue(res.ok, res)
+                    self.assertEqual(res.code, "OK")
+                    self.assertEqual(res.level, v["level"])
+                    self.assertEqual(res.hash, v["sha256"])
+                    self.assertEqual(res.key, json.loads(v["input"])["computed_by"])
+                    self.assertIsNone(res.path)
+                    # bytes input and parsed input give the same result
+                    self.assertEqual(datumesh.verify(v["input"].encode(), env_keys(v["keys"]), v.get("recompute")), res)
+                    self.assertEqual(datumesh.verify(json.loads(v["input"]), env_keys(v["keys"]), v.get("recompute")), res)
+                    self.assertEqual(datumesh.receipt_hash(v["input"]), v["sha256"])
+                    self.assertEqual(datumesh.receipt_payload(v["input"]).decode(), v["canonical"])
+                else:
+                    self.assertFalse(res.ok)
+                    self.assertEqual(res.code, v["error"])
+                    self.assertIsNone(res.level)
+                    self.assertIsNone(res.key)
+
+    def test_hash_helpers(self) -> None:
+        for v in vectors_of("cell", True):
+            self.assertEqual(datumesh.cell_hash(v["input"]), v["sha256"])
+        for v in vectors_of("function", True):
+            self.assertEqual(datumesh.function_hash(v["input"]), v["sha256"])
+        for v in vectors_of("cell", False):
+            with self.subTest(v["id"]), self.assertRaises(datumesh.DatumeshError) as cm:
+                datumesh.cell_hash(v.get("input") if "input" in v else bytes.fromhex(v["input_hex"]))
+            self.assertEqual(cm.exception.code, v["error"])
+
+    def test_invalid_vectors_raise_exact_code(self) -> None:
+        for v in load_vectors():
+            if v["valid"] or v["kind"] not in ("scalar", "cell", "ref", "function"):
+                continue
+            with self.subTest(v["id"]):
+                data = v["input"] if "input" in v else bytes.fromhex(v["input_hex"])
+                with self.assertRaises(datumesh.DatumeshError) as cm:
+                    datumesh.canonicalize(data, v["kind"])
+                self.assertEqual(cm.exception.code, v["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()
