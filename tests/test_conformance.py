@@ -16,9 +16,9 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        self.assertEqual(sum(counts.values()), 317, counts)
+        self.assertEqual(sum(counts.values()), 319, counts)
         self.assertEqual(counts["unit"], 13, counts)
-        self.assertEqual(counts["envelope"], 48, counts)
+        self.assertEqual(counts["envelope"], 50, counts)
         # every vector's id is its path, and every kind is one the runner knows
         for v in load_vectors():
             self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",

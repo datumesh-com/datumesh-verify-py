@@ -60,7 +60,7 @@ class EnvelopeVectorTest(unittest.TestCase):
                 else:
                     self.assertEqual((res.ok, res.code), (False, v["error"]))
                 n += 1
-        self.assertEqual(n, 48)
+        self.assertEqual(n, 50)
 
     def test_valid_bodies_with_wrong_status(self) -> None:
         total = 0
@@ -256,8 +256,14 @@ class RequestBindingTest(unittest.TestCase):
         self.assertEqual(self.code(ok(), {"cell_id": "0" * 64}), "E_ENVELOPE")
         self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}), "E_ENVELOPE")
         self.assertEqual(self.code(stale(), {"cell_id": "0" * 64}), "E_ENVELOPE")
-        self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}),
-                         "E_ENVELOPE")
+        # stale (SPEC 5.5 step 5, spec 240a830): the receipt's asof is at or before the requested asof.
+        self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}), "OK")
+        self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": R["asof"]}), "OK")
+        self.assertEqual(self.code(stale(), {"cell_id": CELL_ID}), "OK")
+        self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2024-03-16T08:59:59.999999Z"}), "E_ENVELOPE")
+        self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2020-01-01T00:00:00.000000Z"}), "E_ENVELOPE")
+        # ok still needs the same asof
+        self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": "2024-03-16T08:59:59.999999Z"}), "E_ENVELOPE")
         res = check_envelope(200, json.dumps(ok()), KEYS, {"cell_id": "0" * 64})
         self.assertEqual(res.path, "$.receipt.cell")
         res = check_envelope(200, json.dumps(ok()), KEYS, {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"})
