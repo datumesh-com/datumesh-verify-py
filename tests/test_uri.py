@@ -29,7 +29,7 @@ class UriTest(unittest.TestCase):
                 self.assertEqual(parse_uri(format_uri(v["object"]), v["signature"]), v["object"])
                 n += 1
         self.assertEqual(n, 11)
-        self.assertEqual(len(vectors_of("uri", False)), 27)
+        self.assertEqual(len(vectors_of("uri", False)), 32)
 
     def test_invalid_vectors(self) -> None:
         for v in vectors_of("uri", False):

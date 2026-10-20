@@ -103,7 +103,12 @@ class JcsTest(unittest.TestCase):
     def test_jcs_vectors(self) -> None:
         for v in vectors_of("jcs"):
             with self.subTest(v["id"]):
-                self.assertEqual(jcs(v["input"]).decode("utf-8"), v["canonical"])
+                if v["valid"]:
+                    self.assertEqual(jcs(v["input"]).decode("utf-8"), v["canonical"])
+                else:
+                    with self.assertRaises(DatumeshError) as cm:
+                        jcs(v["input"])
+                    self.assertEqual(cm.exception.code, v["error"])
 
     def test_strict_parsing(self) -> None:
         cases = {
@@ -123,7 +128,7 @@ class JcsTest(unittest.TestCase):
             self.assertEqual(cm.exception.code, "E_PARSE_JSON")
         # Underflow is not out of range: 1e-400 is the double 0.
         self.assertEqual(jcs("[1e-400, -0, 0e999999]"), b"[0,0,0]")
-        self.assertEqual(jcs("[" * 500 + "]" * 500), b"[" * 500 + b"]" * 500)
+        self.assertEqual(jcs("[" * 64 + "]" * 64), b"[" * 64 + b"]" * 64)  # SPEC 6.1: at most 64 levels
         self.assertEqual(jcs('"\\u00e9\\/"'), '"é/"'.encode())
         self.assertEqual(jcs("123456789012345678901234567890"), b"1.2345678901234568e+29")
 
