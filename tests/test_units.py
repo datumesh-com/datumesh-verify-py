@@ -55,7 +55,7 @@ class EmbeddedListTest(unittest.TestCase):
         self.assertEqual(len(blocks["units-currency"]), len(set(blocks["units-currency"])))
         self.assertEqual(datumesh.CURRENCIES, _units.CURRENCIES)
         self.assertEqual(set(datumesh.UNITS), set(_units.LITERALS))
-        self.assertEqual(len(_units.CURRENCIES), 191)
+        self.assertEqual(len(_units.CURRENCIES), 189)  # 177 of List One without XXX, 12 withdrawn
         self.assertNotIn("XXX", _units.CURRENCIES)
         self.assertEqual(_units.SOURCE_SHA256, hashlib.sha256((SPEC / "units.md").read_bytes()).hexdigest())
 
@@ -282,7 +282,7 @@ class ResolutionTest(unittest.TestCase):
             (REF, dict(good, fn_hash="0" * 64, args={"c": {"type": "number", "value": "1.50"}}), "E_CANON_NUMBER"),
             (bad_lang, good, "E_FN_HASH_MISMATCH"),
             (bad_lang, cell(bad_lang, {"c": sv("USD")}), "E_CANON_NAME"),
-            ("x", good, "E_SCHEMA"),
+            ("x", good, "E_PARSE_JSON"),  # text is parsed as JSON
             ("\"x\"", dict(good, ns="Bad"), "E_SCHEMA"),
             (REF, {"args": {}, "fn": "f", "ns": "a.example"}, "E_SCHEMA"),
             (REF, dict(good, ns=5), "E_SCHEMA"),

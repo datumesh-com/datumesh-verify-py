@@ -185,8 +185,8 @@ class EnvelopeRulesTest(unittest.TestCase):
                 self.assertEqual(res.ok, code == "OK")
 
     def test_no_keys_for_the_signer(self) -> None:
-        self.assertEqual(check_envelope(200, json.dumps(ok()), {}).code, "E_KEY_UNAVAILABLE")
         self.assertEqual(check_envelope(200, json.dumps(ok()), []).code, "E_KEY_UNAVAILABLE")
+        self.assertEqual(check_envelope(200, json.dumps(ok()), {}).code, "E_KEY_UNKNOWN")  # {} maps no key ids
 
     def test_result(self) -> None:
         res = check_envelope(200, PRIMARY["input"], KEYS)

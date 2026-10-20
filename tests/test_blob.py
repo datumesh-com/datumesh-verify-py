@@ -74,7 +74,8 @@ class BlobContentTest(unittest.TestCase):
         r = json.loads(BLOB["input"])
         r["summary"] = "Tampered."
         self.assertEqual(verify(r, KEYS, blob=b"x").code, "E_SIGNATURE")
-        self.assertEqual(verify(BLOB["input"], {}, blob=b"x").code, "E_KEY_UNAVAILABLE")
+        self.assertEqual(verify(BLOB["input"], [], blob=b"x").code, "E_KEY_UNAVAILABLE")
+        self.assertEqual(verify(BLOB["input"], {}, blob=b"x").code, "E_KEY_UNKNOWN")  # {} maps no key ids
 
     def test_content_for_a_receipt_that_is_not_a_blob_is_ignored(self) -> None:
         # Confirmed against the reference tool: blob content given for a number receipt is not checked.
