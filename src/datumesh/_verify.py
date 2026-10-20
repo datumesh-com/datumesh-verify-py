@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from nacl.exceptions import CryptoError
 from nacl.signing import VerifyKey
@@ -13,7 +13,7 @@ from . import _model
 from ._errors import DatumeshError, fail
 from ._json import check_json_value, jcs_bytes, parse_json
 from ._keys import find_key, key_sources, _Source
-from ._lexical import host_of
+from ._lexical import blob_parts
 
 _TEXT = (str, bytes, bytearray, memoryview)
 
@@ -100,9 +100,10 @@ def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_
     declared_valid = {n for n, a in sig_args.items() if a["valid"]}
     if set(r["valid"]) != declared_valid:
         fail("E_VALID_MISMATCH", "valid must echo exactly the declared valid-time arguments", "$.valid")
-    # 7.4 return type
-    if r["type"] != desc["signature"]["returns"]:
-        fail("E_RETURN_TYPE", f"the function returns {desc['signature']['returns']}", "$.type")
+    # 7.4 return type: returns, or its type member when it is an object
+    declared = _model.return_type(desc["signature"])
+    if r["type"] != declared:
+        fail("E_RETURN_TYPE", f"the function returns {declared}", "$.type")
     # 7.5 inputs
     supplied = recompute.get("inputs") or {}
     declared_inputs = set(desc["inputs"])
@@ -133,6 +134,15 @@ def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_
         fail("E_VALUE_MISMATCH", "the recomputed value differs from the receipt's", "$.value")
 
 
+def check_blob_content(r: Dict[str, Any], content: bytes) -> None:
+    """Step 7.7: the content has exactly the blob's length and its SHA-256 is the blob's hash."""
+    digest, length, _ = blob_parts(r["value"])
+    if len(content) != length:
+        fail("E_BLOB_MISMATCH", f"the content has {len(content)} bytes, the blob states {length}", "$.value")
+    if hashlib.sha256(content).hexdigest() != digest:
+        fail("E_BLOB_MISMATCH", "the content's SHA-256 differs from the blob's hash", "$.value")
+
+
 def _check_recompute_arg(recompute: Any) -> None:
     if recompute is None:
         return
@@ -146,7 +156,8 @@ def _check_recompute_arg(recompute: Any) -> None:
         raise TypeError("recompute['inputs'] must be a mapping of receipt hash to receipt JSON text")
 
 
-def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = None) -> VerifyResult:
+def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = None,
+           blob: Optional[Union[bytes, bytearray, memoryview]] = None) -> VerifyResult:
     """Verify a receipt (SPEC.md 10.1) against keys supplied by the caller.
 
     ``receipt``: JSON text (str or bytes) or a parsed object (duplicate members
@@ -155,6 +166,10 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
     validity windows), or a list of those; the first source that covers the
     ``computed_by`` host is used. ``recompute`` (optional) enables step 7:
     ``{"descriptor": ..., "inputs": {hash: receipt text}, "value": {"type", "value"}}``.
+    ``blob`` (optional): the content bytes of a blob value. When the receipt's
+    ``type`` is ``blob``, step 7.7 checks the content's length and SHA-256
+    (after step 7 if ``recompute`` is given, else directly after step 6); for
+    any other type it is ignored. The level stays ``signed`` or ``recomputed``.
 
     Never raises for an invalid receipt or bad key material: the outcome is in
     the returned :class:`VerifyResult`. Raises TypeError only for arguments of
@@ -164,13 +179,19 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
         raise TypeError(f"receipt must be JSON text, bytes or a dict, not {type(receipt).__name__}")
     sources = key_sources(keys)
     _check_recompute_arg(recompute)
+    if blob is not None and not isinstance(blob, (bytes, bytearray, memoryview)):
+        raise TypeError(f"blob must be the content bytes, not {type(blob).__name__}")
     h: Optional[str] = None
     try:
         r, h = _signed(receipt, sources)
-        if recompute is None:
-            return VerifyResult(True, "OK", "signed", h, r["computed_by"], "signature-valid", None)
-        _recompute(r, recompute, sources)
-        return VerifyResult(True, "OK", "recomputed", h, r["computed_by"], "fully verified by recomputation", None)
+        level, detail = "signed", "signature-valid"
+        if recompute is not None:
+            _recompute(r, recompute, sources)
+            level, detail = "recomputed", "fully verified by recomputation"
+        if blob is not None and r["type"] == "blob":
+            check_blob_content(r, bytes(blob))
+            detail += "; blob content matches"
+        return VerifyResult(True, "OK", level, h, r["computed_by"], detail, None)
     except DatumeshError as e:
         h = h or getattr(e, "receipt_hash", None)
         return VerifyResult(False, e.code, None, h, None, e.detail, e.path)

@@ -17,9 +17,11 @@ ERROR_CODES: tuple[str, ...] = (
     "E_CANON_PERCENT",
     "E_CANON_TYPE",
     "E_CANON_NUMBER",
+    "E_CANON_UNIT",
     "E_CANON_DATE",
     "E_CANON_INSTANT",
     "E_CANON_STRING",
+    "E_CANON_BLOB",
     "E_CANON_HEX",
     "E_CANON_LICENCE",
     "E_CANON_SET",
@@ -43,6 +45,8 @@ ERROR_CODES: tuple[str, ...] = (
     "E_INPUT_INVALID",
     "E_INPUT_UNDECLARED",
     "E_VALUE_MISMATCH",
+    "E_BLOB_MISMATCH",
+    "E_ENVELOPE",
 )
 
 

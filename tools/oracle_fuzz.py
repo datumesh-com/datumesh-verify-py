@@ -52,6 +52,18 @@ POOL = ["", "*", "X", "a" * 65, "a" * 64, "1.50", "-0", "0", "1", "true", "2024-
 # Strings whose validity differs between Unicode 13 (Python 3.10) and the pinned 15.1, or 15.1 and 16.0.
 POOL += [chr(0x870), chr(0x1E030), chr(0x2EBF0), chr(0x31350), chr(0x1C89), chr(0x897),
          "a" + chr(0x1E08F) + chr(0x316), "a" + chr(0x316) + chr(0x1E08F)]
+# spec-0.2.0: units, blobs, envelopes
+POOL += ["EUR", "USD", "usd", "GRD", "XXX", "degC", "°C", "kWh", "m/s", "1", "percent", "bp", "count",
+         "index:2015=100", "index:2015=0", "index:2015-13=1", "USD/EUR", "blob",
+         "9dc30a40021f1f79d8dd9437ec9014ce134138326b72fcb9696485ab3d69330a:17:text/plain",
+         "9dc30a40021f1f79d8dd9437ec9014ce134138326b72fcb9696485ab3d69330a:17:text/Plain",
+         "ok", "stale", "not_covered", "unlicensed", "payment_required", "rate_limited", "error",
+         "primary", "verified", "unverified", "E_SIGNATURE", "E_TEAPOT", "0.05", "https://mesh.example/pay"]
+OBJ_POOL = [{"arg": "base"}, {"arg": "quote"}, {"arg": "date"}, {"arg": "zz"}, {"of": "USD", "per": "EUR"},
+            {"of": {"arg": "quote"}, "per": {"arg": "base"}}, {"of": "kg", "per": "EUR"},
+            {"type": "number", "unit": "EUR"}, {"type": "number"}, {"type": "boolean"},
+            {"type": "number", "unit": "1", "valid": False}, {"type": "blob", "valid": False}, 0, 30, 1.5, -1,
+            {"amount": "1", "authorise": "https://x.example/p", "currency": "EUR"}]
 ALPHA = "aAzZ09-_./#:%*?&= ü̈€"
 ALPHA += chr(0x1E08F) + chr(0x316) + chr(0x870) + chr(0x1C89)
 NAMES = ["x", "asof", "dm_x", "A", "base", "date", "quote", "value", "type", "valid", "sig", "proto",
@@ -97,7 +109,7 @@ def mutate(v):
     if isinstance(node, str) and r < 0.45:
         parent[key] = edit(node) if rnd.random() < 0.5 else rnd.choice(POOL)
     elif r < 0.55:
-        parent[key] = rnd.choice([True, False, None, 1.5, [], {}, "*"])
+        parent[key] = rnd.choice([True, False, None, 1.5, [], {}, "*"] + OBJ_POOL)
     elif r < 0.7 and isinstance(parent, dict):
         del parent[key]
     elif r < 0.8 and isinstance(parent, dict):
@@ -127,9 +139,26 @@ def resign(r, seed):
 
 def emit(i, v):
     v = dict(v, id="probe/f%05d" % i, valid=False, error="E_PROBE", description="fuzz")
-    for k in ("canonical", "sha256", "object", "https", "key_id", "key_ids", "sig", "level"):
+    for k in ("canonical", "sha256", "object", "https", "key_id", "key_ids", "sig", "level", "unit", "outcome",
+              "trust", "receipt_hash"):
         v.pop(k, None)
     json.dump(v, open(os.path.join(OUT, "f%05d.json" % i), "w"))
+
+SEEDS = {}
+for _v in vectors:
+    if _v["kind"] == "receipt" and "keypair" in _v:
+        SEEDS[_v["keypair"]["key_id"]] = _v["keypair"]["seed"]
+
+def resign_any(r):
+    if isinstance(r, dict) and isinstance(r.get("computed_by"), str):
+        seed = SEEDS.get(r["computed_by"].partition("#")[2])
+        if seed:
+            return resign(r, seed)
+    return r
+
+def fn_hash(d):
+    import hashlib
+    return hashlib.sha256(datumesh.jcs(d)).hexdigest()
 
 i = 0
 while i < N:
@@ -163,6 +192,13 @@ while i < N:
                 if rnd.random() < 0.8:
                     r = resign(r, v["keypair"]["seed"])
                 v["input"] = json.dumps(r)
+            elif target < 0.7 and "blob_hex" in v:
+                b = bytearray(bytes.fromhex(v["blob_hex"]))
+                if b and rnd.random() < 0.5:
+                    b[rnd.randrange(len(b))] ^= 1 << rnd.randrange(8)
+                else:
+                    b = b[:-1] if rnd.random() < 0.5 else b + b"x"
+                v["blob_hex"] = b.hex()
             elif target < 0.8 and "recompute" in v:
                 rc = v["recompute"]
                 if rc.get("descriptor") is not None and rnd.random() < 0.5:
@@ -181,6 +217,26 @@ while i < N:
                 else:
                     env["status"] = rnd.choice([404, "error"])
                     env.pop("body", None)
+        elif kind == "unit":
+            obj = mutate(json.loads(v["input"]))
+            if rnd.random() < 0.7 and isinstance(obj, dict) and isinstance(obj.get("cell"), dict) \
+                    and "descriptor" in obj:
+                try:
+                    obj["cell"]["fn_hash"] = fn_hash(obj["descriptor"])
+                except Exception:
+                    pass
+            v["input"] = json.dumps(obj)
+        elif kind == "envelope":
+            t = rnd.random()
+            if t < 0.15:
+                v["status"] = rnd.choice([200, 402, 403, 404, 429, 500, 503, 599, 600, 400])
+            else:
+                body = json.loads(v["input"])
+                if isinstance(body, dict) and "receipt" in body and rnd.random() < 0.4:
+                    body["receipt"] = resign_any(mutate(body["receipt"]))
+                else:
+                    body = mutate(body)
+                v["input"] = json.dumps(body)
         else:
             src = v.get("input")
             if src is None:

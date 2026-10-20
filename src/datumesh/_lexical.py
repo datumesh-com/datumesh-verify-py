@@ -1,4 +1,4 @@
-"""Lexical rules of SPEC.md sections 2-4 and 8 (names, scalars, hex, licences, key references).
+"""Lexical rules of SPEC.md sections 2-4 and 8 (names, scalars, blobs, hex, licences, key references).
 
 Each check raises DatumeshError with the code the specification assigns. Where
 one value breaks several rules, the order of checks is: grammar first, then
@@ -14,7 +14,7 @@ from typing import Any, Optional
 from ._errors import fail
 from ._unicode import is_assigned, is_nfc
 
-TYPES = ("boolean", "date", "instant", "number", "string")
+TYPES = ("blob", "boolean", "date", "instant", "number", "string")
 VALID_TIME_TYPES = ("date", "instant", "string")
 
 LIMIT_NAME = 64
@@ -29,6 +29,8 @@ LIMIT_LICENCE_SPDX = 64
 LIMIT_LICENCE_URL = 512
 LIMIT_KEYS = 64
 LIMIT_DNS = 253
+LIMIT_BLOB_LENGTH = 2 ** 53 - 1
+LIMIT_MEDIA_TYPE = 128
 
 _NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
@@ -41,6 +43,8 @@ _HEX64 = re.compile(r"[0-9a-f]{64}")
 _HEX128 = re.compile(r"[0-9a-f]{128}")
 _SPDX = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 _URL_REST = re.compile(r"[!-~]+")
+_RESTRICTED_NAME = r"[a-z0-9][a-z0-9!#$&^_.+-]*"
+_BLOB = re.compile(r"[0-9a-f]{64}:(0|[1-9][0-9]*):(" + _RESTRICTED_NAME + "/" + _RESTRICTED_NAME + ")")
 
 
 def check_name(s: str, path: Optional[str], code: str = "E_CANON_NAME") -> None:
@@ -99,8 +103,13 @@ def host_of(namespace: str) -> str:
     return namespace.split("/", 1)[0]
 
 
+def is_number(s: str) -> bool:
+    """The canonical decimal grammar of SPEC 3.1 (without the length limit)."""
+    return bool(_NUMBER.fullmatch(s)) and s != "-0"
+
+
 def check_number(s: str, path: Optional[str]) -> None:
-    if not _NUMBER.fullmatch(s) or s == "-0":
+    if not is_number(s):
         fail("E_CANON_NUMBER", f"not a canonical decimal: {s!r}", path)
     if len(s) > LIMIT_NUMBER:
         fail("E_CANON_LIMIT", f"number longer than {LIMIT_NUMBER} characters", path)
@@ -113,7 +122,8 @@ def _is_leap(y: int) -> bool:
 _MONTH_DAYS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
 
-def _real_day(y: int, m: int, d: int) -> bool:
+def real_day(y: int, m: int, d: int) -> bool:
+    """A day of the proleptic Gregorian calendar, years 0001-9999 (SPEC 3.2)."""
     if y < 1 or not 1 <= m <= 12 or d < 1:
         return False
     days = 29 if m == 2 and _is_leap(y) else _MONTH_DAYS[m - 1]
@@ -122,15 +132,30 @@ def _real_day(y: int, m: int, d: int) -> bool:
 
 def check_date(s: str, path: Optional[str]) -> None:
     m = _DATE.fullmatch(s)
-    if not m or not _real_day(int(m.group(1)), int(m.group(2)), int(m.group(3))):
+    if not m or not real_day(int(m.group(1)), int(m.group(2)), int(m.group(3))):
         fail("E_CANON_DATE", f"not a YYYY-MM-DD calendar date: {s!r}", path)
 
 
 def check_instant(s: str, path: Optional[str]) -> None:
     m = _INSTANT.fullmatch(s)
-    if (not m or not _real_day(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    if (not m or not real_day(int(m.group(1)), int(m.group(2)), int(m.group(3)))
             or int(m.group(4)) > 23 or int(m.group(5)) > 59 or int(m.group(6)) > 59):
         fail("E_CANON_INSTANT", f"not a UTC instant YYYY-MM-DDTHH:MM:SS.ffffffZ: {s!r}", path)
+
+
+def check_blob(s: str, path: Optional[str]) -> None:
+    """``<sha256>:<length>:<media type>`` (SPEC 3.7). Every failure is E_CANON_BLOB."""
+    m = _BLOB.fullmatch(s)
+    if (not m or len(m.group(1)) > 16 or int(m.group(1)) > LIMIT_BLOB_LENGTH
+            or len(m.group(2)) > LIMIT_MEDIA_TYPE):
+        fail("E_CANON_BLOB", "not <64 lowercase hex>:<length up to 2^53 - 1>:<lowercase type/subtype, "
+             f"at most {LIMIT_MEDIA_TYPE} characters>", path)
+
+
+def blob_parts(s: str) -> tuple:
+    """(sha256 hex, length, media type) of a blob value already checked with :func:`check_blob`."""
+    digest, length, media = s.split(":", 2)
+    return digest, int(length), media
 
 
 def check_text(s: str, path: Optional[str], limit: int, allow_tab_lf: bool = False) -> None:
@@ -200,5 +225,7 @@ def check_typed_value(type_: str, value: Any, path_type: Optional[str], path_val
         check_date(value, path_value)
     elif type_ == "instant":
         check_instant(value, path_value)
+    elif type_ == "blob":
+        check_blob(value, path_value)
     else:
         check_string(value, path_value)

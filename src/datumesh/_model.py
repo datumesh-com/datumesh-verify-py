@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import _lexical as lx
+from . import _units
 from ._errors import fail
 from ._json import sort_key
 
@@ -76,17 +77,30 @@ def _string_array_structure(v: Any, path: str) -> None:
 
 
 def _signature_structure(v: Any, path: str) -> None:
+    """A signature's JSON shape (SPEC 7): argument declarations are ``{"type", "valid"}`` with an optional
+    ``unit``; ``returns`` is a type name or ``{"type"}`` with an optional ``unit``; units have the shapes of
+    units.md 1. Whether a unit belongs there, and whether it is listed, is step 3 (E_CANON_UNIT)."""
     require_object(v, path, ("args", "returns"))
     args = v["args"]
     if not isinstance(args, dict):
         fail("E_SCHEMA", "expected an object", _child(path, "args"))
     for name in _sorted(args):
         p = _child(_child(path, "args"), name)
-        require_object(args[name], p, ("type", "valid"))
+        require_object(args[name], p, ("type", "valid"), ("unit",))
         require_string(args[name]["type"], _child(p, "type"), "type")
+        if "unit" in args[name]:
+            _units.check_unit_shape(args[name]["unit"], _child(p, "unit"))
         if not isinstance(args[name]["valid"], bool):
             fail("E_SCHEMA", "valid must be a boolean", _child(p, "valid"))
-    require_string(v["returns"], _child(path, "returns"), "returns")
+    returns = v["returns"]
+    rp = _child(path, "returns")
+    if isinstance(returns, dict):
+        require_object(returns, rp, ("type",), ("unit",))
+        require_string(returns["type"], _child(rp, "type"), "type")
+        if "unit" in returns:
+            _units.check_unit_shape(returns["unit"], _child(rp, "unit"))
+    else:
+        require_string(returns, rp, "returns")
 
 
 # ---------------------------------------------------------------- step 3: canonical form
@@ -124,15 +138,44 @@ def _signature_canonical(v: Dict[str, Any], path: str) -> None:
     if len(args) > lx.LIMIT_ARGS:
         fail("E_CANON_LIMIT", f"more than {lx.LIMIT_ARGS} arguments", ap)
     for name in _sorted(args):
+        # Within a declaration: type (E_CANON_TYPE), then unit (E_CANON_UNIT), then valid (SPEC 7).
         p = _child(ap, name)
         lx.check_arg_name(name, p)
-        t = args[name]["type"]
+        decl = args[name]
+        t = decl["type"]
         if t not in lx.TYPES:
             fail("E_CANON_TYPE", f"unknown type {t!r}", _child(p, "type"))
-        if args[name]["valid"] and t not in lx.VALID_TIME_TYPES:
+        if t == "number":
+            if "unit" not in decl:
+                fail("E_CANON_UNIT", "a number argument declares its unit", p)
+            _units.check_unit(decl["unit"], args, _child(p, "unit"))
+        elif "unit" in decl:
+            fail("E_CANON_UNIT", "only number arguments have a unit", _child(p, "unit"))
+        if decl["valid"] and t not in lx.VALID_TIME_TYPES:
             fail("E_CANON_TYPE", "a valid-time argument must be a date, instant or string", p)
-    if v["returns"] not in lx.TYPES:
-        fail("E_CANON_TYPE", f"unknown type {v['returns']!r}", _child(path, "returns"))
+    returns = v["returns"]
+    rp = _child(path, "returns")
+    if isinstance(returns, str):
+        if returns not in lx.TYPES:
+            fail("E_CANON_TYPE", f"unknown type {returns!r}", rp)
+        if returns == "number":
+            fail("E_CANON_UNIT", 'a number return is written {"type": "number", "unit": ...}', rp)
+    else:
+        t = returns["type"]
+        if t not in lx.TYPES:
+            fail("E_CANON_TYPE", f"unknown type {t!r}", _child(rp, "type"))
+        if t != "number":
+            fail("E_CANON_UNIT", f"a {t} return is written as the bare type name, without a unit", rp)
+        if "unit" not in returns:
+            fail("E_CANON_UNIT", "a number return declares its unit", rp)
+        _units.check_unit(returns["unit"], args, _child(rp, "unit"))
+
+
+def return_type(signature: Dict[str, Any]) -> str:
+    """The declared return type of a canonical signature: ``returns``, or its ``type`` member (SPEC 7)."""
+    r = signature["returns"]
+    out: str = r if isinstance(r, str) else r["type"]
+    return out
 
 
 # ---------------------------------------------------------------- kinds
@@ -168,6 +211,14 @@ def _cell_like_canonical(v: Dict[str, Any], path: str, with_hash: bool) -> None:
     lx.check_function_name_length(v["ns"], v["fn"], path)
 
 
+def cell_structure(v: Any, path: str = "$") -> None:
+    _cell_like_structure(v, path, True)
+
+
+def cell_canonical(v: Dict[str, Any], path: str = "$") -> None:
+    _cell_like_canonical(v, path, True)
+
+
 def validate_cell(v: Any, path: str = "$") -> None:
     _cell_like_structure(v, path, True)
     _cell_like_canonical(v, path, True)
@@ -184,6 +235,12 @@ def validate_signature(v: Any, path: str = "$") -> None:
 
 
 def validate_function(v: Any, path: str = "$") -> None:
+    function_structure(v, path)
+    function_canonical(v, path)
+
+
+def function_structure(v: Any, path: str = "$") -> None:
+    """Step 2 for a descriptor (SPEC 7)."""
     require_object(v, path, ("code", "inputs", "signature"))
     cp = _child(path, "code")
     require_object(v["code"], cp, ("body", "lang"))
@@ -191,7 +248,11 @@ def validate_function(v: Any, path: str = "$") -> None:
     require_string(v["code"]["lang"], _child(cp, "lang"), "lang")
     _string_array_structure(v["inputs"], _child(path, "inputs"))
     _signature_structure(v["signature"], _child(path, "signature"))
-    # step 3
+
+
+def function_canonical(v: Dict[str, Any], path: str = "$") -> None:
+    """Step 3 for a descriptor whose structure is checked (SPEC 6-7, units included)."""
+    cp = _child(path, "code")
     lx.check_text(v["code"]["body"], _child(cp, "body"), lx.LIMIT_BODY, allow_tab_lf=True)
     lx.check_name(v["code"]["lang"], _child(cp, "lang"))
     ip = _child(path, "inputs")

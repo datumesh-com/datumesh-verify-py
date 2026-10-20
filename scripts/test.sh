@@ -14,7 +14,7 @@ for v in $versions; do
     pip install -q --disable-pip-version-check --root-user-action=ignore "pynacl>=1.5.0" || exit 1
     PYTHONPATH=src python -m unittest discover -s tests -v > /tmp/test.log 2>&1
     rc=$?
-    grep -E "^(conformance|bit flips|runtime Python)" /tmp/test.log
+    grep -E "^(conformance|bit flips|runtime Python|valid envelopes|units accepted)" /tmp/test.log
     tail -n 4 /tmp/test.log
     [ $rc -eq 0 ] || cat /tmp/test.log
     exit $rc
