@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import math
+import hashlib
+import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from . import _lexical as lx
 from . import _units
 from ._errors import ERROR_CODES, DatumeshError, fail
-from ._json import parse_json
+from ._json import jcs_bytes, number_texts, parse_json
 from ._keys import key_sources
 from ._verify import _signed
 
@@ -21,8 +22,17 @@ OUTCOMES: Dict[str, Tuple[range, Tuple[str, ...], Tuple[str, ...]]] = {
     "unlicensed": (range(403, 404), (), ()),
     "payment_required": (range(402, 403), ("quote",), ()),
     "rate_limited": (range(429, 430), ("retry_after_seconds",), ()),
+    "bad_request": (range(400, 401), ("error",), ()),
     "error": (range(500, 600), ("error",), ()),
 }
+#: Codes a bad_request may carry: the codes parse can raise (SPEC 5.4, 5.5).
+BAD_REQUEST_CODES = frozenset((
+    "E_PARSE_URI", "E_CANON_NAME", "E_CANON_ARG_NAME", "E_CANON_ARG_DUPLICATE", "E_CANON_ARG_ORDER",
+    "E_CANON_PERCENT", "E_CANON_TYPE", "E_CANON_NUMBER", "E_CANON_DATE", "E_CANON_INSTANT", "E_CANON_STRING",
+    "E_CANON_BLOB", "E_CANON_LIMIT", "E_ARG_UNKNOWN", "E_ARG_MISSING"))
+#: Codes an error may carry: every code of SPEC 10.2 but E_ENVELOPE, which is a client's.
+ERROR_OUTCOME_CODES = frozenset(c for c in ERROR_CODES if c != "E_ENVELOPE")
+_INTEGER = re.compile(r"0|[1-9][0-9]*")
 TRUST = ("primary", "verified", "unverified")
 MAX_SECONDS = 2 ** 53 - 1
 
@@ -53,14 +63,15 @@ def _bad(detail: str, path: str) -> None:
     fail("E_ENVELOPE", detail, path)
 
 
-def _seconds(v: Any, path: str) -> None:
-    """A JSON number with an integral value, 0 to 2^53 - 1 (SPEC 5.5). ``30.0`` and ``3e1`` are integral."""
-    if isinstance(v, bool) or not isinstance(v, (int, float)):
+def _seconds(v: Any, text: Optional[str], path: str) -> None:
+    """An integer member (SPEC 5.5): a JSON number written 0 or [1-9][0-9]*, at most 2^53 - 1.
+    ``text`` is the number's source text (None when the value is not a JSON number)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or text is None:
         _bad("a whole number of seconds (a JSON number)", path)
-    if isinstance(v, float) and (not math.isfinite(v) or not v.is_integer()):
-        _bad("a whole number of seconds", path)
-    if not 0 <= v <= MAX_SECONDS:
-        _bad(f"seconds are between 0 and {MAX_SECONDS}", path)
+    if not _INTEGER.fullmatch(text):
+        _bad("an integer member is written 0 or [1-9][0-9]*: no sign, fraction or exponent", path)
+    if len(text) > 16 or int(text) > MAX_SECONDS:
+        _bad(f"at most {MAX_SECONDS} seconds", path)
 
 
 def _quote(q: Any, path: str) -> None:
@@ -82,8 +93,9 @@ def _quote(q: Any, path: str) -> None:
         _bad("currency is a currency code from units.md", f"{path}.currency")
 
 
-def _members(env: Any) -> Dict[str, Any]:
-    """Step 2: the members against the table and rules of SPEC 5.5."""
+def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
+    """Step 2: the members against the table and rules of SPEC 5.5. ``numbers`` holds the source
+    text of the top-level members that are JSON numbers."""
     if not isinstance(env, dict):
         _bad("an envelope is a JSON object", "$")
     if "outcome" not in env:
@@ -104,10 +116,12 @@ def _members(env: Any) -> Dict[str, Any]:
     for name in sorted(env):  # JCS order (all names are ASCII)
         v, p = env[name], f"$.{name}"
         if name in ("age_seconds", "retry_after_seconds"):
-            _seconds(v, p)
+            _seconds(v, numbers.get(name), p)
         elif name == "error":
-            if not isinstance(v, str) or v not in ERROR_CODES:
-                _bad("error is a code from SPEC 10.2", p)
+            allowed_codes = BAD_REQUEST_CODES if outcome == "bad_request" else ERROR_OUTCOME_CODES
+            if not isinstance(v, str) or v not in allowed_codes:
+                _bad("bad_request carries a code parse can raise (SPEC 5.4)" if outcome == "bad_request"
+                     else "error is a code from SPEC 10.2 other than E_ENVELOPE", p)
         elif name == "quote":
             _quote(v, p)
         elif name == "reason":
@@ -139,28 +153,52 @@ def _is_primary(r: Dict[str, Any]) -> bool:
     return r["computed_by"].partition("#")[0] == lx.host_of(r["cell"]["ns"]) and not r["inputs"]
 
 
-def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], keys: Any) -> EnvelopeResult:
-    """Check a mesh's response (SPEC 5.5): the HTTP ``status`` and the ``body`` (JSON text or bytes).
+def _check_request(request: Any) -> Tuple[str, Optional[str]]:
+    if not isinstance(request, Mapping):
+        raise TypeError('request must be {"cell_id": <hex>, "asof": <instant> (optional)}')
+    if not set(request) <= {"cell_id", "asof"} or "cell_id" not in request:
+        raise ValueError('request has cell_id and optionally asof, nothing else')
+    cell_id, asof = request["cell_id"], request.get("asof")
+    try:
+        if not isinstance(cell_id, str) or ("asof" in request and not isinstance(asof, str)):
+            raise TypeError("request cell_id and asof are strings")
+        lx.check_hex(cell_id, 64, "request.cell_id")
+        if asof is not None:
+            lx.check_instant(asof, "request.asof")
+    except DatumeshError as e:
+        raise ValueError(f"invalid request: {e}") from None
+    return cell_id, asof
+
+
+def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], keys: Any,
+                   request: Mapping[str, str]) -> EnvelopeResult:
+    """Check a mesh's response (SPEC 5.5): the HTTP ``status`` and the ``body`` (JSON text or bytes)
+    against the ``request`` it answers.
+
+    ``request`` is ``{"cell_id": <hex>, "asof": <instant>}``: the cell id (SPEC 4.4) of
+    the cell requested, that is the cell its URI denotes with the ``fn_hash`` you
+    resolved, and the ``asof`` of the request, omitted when the request had none.
 
     Steps, first failure reported: strict JSON (6.1); members against the table
     of 5.5 (``E_ENVELOPE``); the status matches the outcome (``E_ENVELOPE``); an
     embedded receipt is verified through step 6 of 10.1 with ``keys`` (the forms
-    :func:`verify` takes) and keeps that procedure's codes; then ``trust`` is
-    checked against the receipt (``primary`` exactly when the signer's host is
-    the namespace's host and there are no inputs) and ``superseded_by`` must not
-    be the receipt's own hash (``E_ENVELOPE``).
+    :func:`verify` takes) and keeps that procedure's codes; the receipt answers
+    the request: same cell id, and the same ``asof`` when one was requested
+    (``E_ENVELOPE``); then ``trust`` is checked against the receipt (``primary``
+    exactly when the signer's host is the namespace's host and there are no
+    inputs) and ``superseded_by`` must not be the receipt's own hash (``E_ENVELOPE``).
 
-    It does not check that the receipt answers the cell or ``asof`` you requested
-    (SPEC 5.5 does not ask for it): compare ``receipt.cell`` with your request.
-
-    Never raises for an invalid envelope; raises TypeError only for a body that
-    is not text or bytes, or keys of an unsupported type. Uses no network.
+    Never raises for an invalid envelope; raises TypeError for a body that is not
+    text or bytes, keys of an unsupported type or a request that is not a mapping,
+    and ValueError for a malformed request. Uses no network.
     """
     if not isinstance(body, (str, bytes, bytearray, memoryview)):
         raise TypeError(f"body must be JSON text or bytes, not {type(body).__name__}")
     sources = key_sources(keys)
+    want_cell, want_asof = _check_request(request)
     try:
-        env = _members(parse_json(body))
+        parsed = parse_json(body)
+        env = _members(parsed, number_texts(body) if isinstance(parsed, dict) else {})
         outcome = env["outcome"]
         if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
             _bad(f"HTTP status {status!r} does not match outcome {outcome!r}", "status")
@@ -174,6 +212,10 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
                 if path is not None and path.startswith("$"):
                     path = "$.receipt" + path[1:]
                 raise DatumeshError(e.code, e.detail, path) from None
+            if hashlib.sha256(jcs_bytes(r["cell"])).hexdigest() != want_cell:
+                _bad("the receipt's cell is not the cell requested", "$.receipt.cell")
+            if want_asof is not None and r["asof"] != want_asof:
+                _bad(f"the receipt answers as of {r['asof']}, the request asked for {want_asof}", "$.receipt.asof")
             trust = env["trust"]
             if (trust == "primary") != _is_primary(r):
                 _bad("trust is primary exactly when the signer's host is the namespace's host and there are no "

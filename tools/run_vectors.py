@@ -14,7 +14,8 @@ for an envelope with a receipt trust and receipt_hash. Key environments (``env``
 of a keys vector, each host of a receipt or envelope vector's ``keys``) are
 converted with ``keys_from_response``; a status of "error" means a failed
 retrieval. A receipt vector's ``blob_hex`` is passed to ``verify`` as the blob
-content (step 7.7).
+content (step 7.7), and the output then has ``blob_checked``; an envelope
+vector's ``request`` is passed to ``check_envelope``.
 
     jq -c . spec/vectors/*/*.json | python tools/run_vectors.py
 """
@@ -82,19 +83,19 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
                 payload = datumesh.receipt_payload(_input(v))
                 parsed = json.loads(_input(v))
                 out.update(canonical=payload.decode("utf-8"), sha256=res.hash, sig=parsed["sig"], level=res.level)
+                if blob is not None:
+                    out["blob_checked"] = res.blob_checked
         elif kind == "unit":
             # input: JSON text of {"cell", "descriptor"}, parsed strictly
             obj = datumesh.parse_json(_input(v))
             if not isinstance(obj, dict) or set(obj) != {"cell", "descriptor"}:
                 raise datumesh.DatumeshError("E_SCHEMA", "a unit vector input has exactly cell and descriptor", "$")
-            # Members are parsed JSON: a JSON string here is a wrong type, not JSON text to parse.
-            for name in ("cell", "descriptor"):
-                if not isinstance(obj[name], dict):
-                    raise datumesh.DatumeshError("E_SCHEMA", f"{name} is an object", f"$.{name}")
-            out["unit"] = datumesh.resolved_unit(obj["descriptor"], obj["cell"])
+            # Members are parsed JSON values: pass them as JSON text, so that a JSON string member is a
+            # string value (resolved_unit would otherwise parse a str as JSON text).
+            out["unit"] = datumesh.resolved_unit(json.dumps(obj["descriptor"]), json.dumps(obj["cell"]))
         elif kind == "envelope":
             keys = [_env_keys(h, e) for h, e in (v.get("keys") or {}).items()]
-            env = datumesh.check_envelope(v["status"], _input(v), keys)
+            env = datumesh.check_envelope(v["status"], _input(v), keys, v["request"])
             if not env.ok:
                 out["error"] = env.code
             else:

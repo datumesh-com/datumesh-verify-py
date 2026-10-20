@@ -169,8 +169,7 @@ while i < N:
         continue
     try:
         if kind == "uri":
-            # Only the URI is mutated: signatures are validated here but not by the
-            # reference tool (a known divergence, see DEFECTS.md).
+            # Only the URI is mutated; the signature comes from a checked descriptor (SPEC 5.4).
             s = v["input"]
             for _ in range(rnd.randint(1, 3)):
                 s = edit(s)

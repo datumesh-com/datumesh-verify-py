@@ -83,6 +83,23 @@ def parse_json(data: JSONText, path: str = "$") -> Any:
     return value
 
 
+class NumberText(str):
+    """The source text of a JSON number, as :func:`number_texts` reports it."""
+
+
+def number_texts(data: JSONText) -> Dict[str, str]:
+    """The source text of each top-level member of a JSON object whose value is a number.
+
+    For text that :func:`parse_json` has already accepted. SPEC 5.5 constrains how
+    the envelope's integer members are written, which the parsed double cannot show.
+    """
+    text = bytes(data).decode("utf-8") if isinstance(data, (bytes, bytearray, memoryview)) else data
+    value = json.loads(text, parse_float=NumberText, parse_int=NumberText, parse_constant=_constant)
+    if not isinstance(value, dict):
+        return {}
+    return {k: str(v) for k, v in value.items() if isinstance(v, NumberText)}
+
+
 def check_json_value(value: Any, path: str = "$") -> None:
     """Check that an already-parsed value is I-JSON: dict/list/str/float/int/bool/None only,
     string keys, no lone surrogates, finite numbers within the double range."""

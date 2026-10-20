@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import _lexical as lx
 from ._errors import fail
-from ._model import SLICE, validate_ref, validate_signature
+from ._model import SLICE, validate_ref
 
 SCHEME = "cell://"
 _LITERAL = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:")
@@ -47,18 +47,26 @@ def _encode(text: str) -> str:
     return "".join(parts)
 
 
+def _declared_types(signature: Any) -> Dict[str, str]:
+    args = signature.get("args") if isinstance(signature, dict) else None
+    if not isinstance(args, dict) or not all(
+            isinstance(a, dict) and isinstance(a.get("type"), str) for a in args.values()):
+        raise TypeError('signature must be {"args": {<name>: {"type": <type name>, ...}}, ...}')
+    return {name: a["type"] for name, a in args.items()}
+
+
 def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
     """Parse a cell URI into a cell reference (SPEC 4.3, 5.4).
 
     ``signature`` is the ``signature`` member of the function's descriptor; it
-    supplies each argument's type. It is validated first (as in a descriptor).
-    Checks run in the order of SPEC 5.4 and the first failure is raised as
-    DatumeshError.
+    supplies each argument's type. As SPEC 5.4 says, it is taken as given (it comes
+    from a descriptor already checked under section 7): only its argument types are
+    read, and a signature from which they cannot be read is a TypeError. Checks run
+    in the order of SPEC 5.4 and the first failure is raised as DatumeshError.
     """
     if not isinstance(uri, str):
         raise TypeError(f"uri must be a str, not {type(uri).__name__}")
-    validate_signature(signature, "signature")
-    declared: Dict[str, str] = {name: a["type"] for name, a in signature["args"].items()}
+    declared = _declared_types(signature)
 
     # 1. Outer grammar.
     if not uri.startswith(SCHEME) or "#" in uri:

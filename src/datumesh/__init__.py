@@ -125,20 +125,18 @@ def resolved_unit(descriptor: Any, cell: Any) -> Optional[str]:
 
     ``descriptor`` is the function descriptor that ``cell.fn_hash`` pins and ``cell``
     a cell (4.4); each is a parsed object or JSON text/bytes (parsed strictly). The
-    checks run in this order, first failure raised as :class:`DatumeshError`: the
-    structure of the cell, then of the descriptor (E_SCHEMA); the cell's canonical
-    form; the descriptor hashes to ``cell.fn_hash`` (E_FN_HASH_MISMATCH); the
-    descriptor's canonical form (units included); then resolution: a referenced
+    checks run in the order of units.md 3, first failure raised as
+    :class:`DatumeshError`: the cell (structure, then canonical form); the
+    descriptor hashes to ``cell.fn_hash`` (E_FN_HASH_MISMATCH); the descriptor
+    (structure, then canonical form, units included); then substitution: a referenced
     argument must be bound (E_ARG_MISSING), not a slice (E_SLICE), a string
     (E_ARG_TYPE), and its value a listed unit, or on a side of a rate a currency
     code (E_CANON_UNIT). Arguments the unit does not reference are not examined.
     """
     c = load(cell, "cell")
     d = load(descriptor, "descriptor")
-    _model.cell_structure(c, "cell")
-    _model.function_structure(d, "descriptor")
-    _model.cell_canonical(c, "cell")
+    _model.validate_cell(c, "cell")
     if hashlib.sha256(jcs_bytes(d)).hexdigest() != c["fn_hash"]:
         fail("E_FN_HASH_MISMATCH", "the descriptor does not hash to cell.fn_hash", "cell.fn_hash")
-    _model.function_canonical(d, "descriptor")
+    _model.validate_function(d, "descriptor")
     return _units.resolve(d["signature"]["returns"], c["args"], "cell")

@@ -79,8 +79,7 @@ class UriTest(unittest.TestCase):
         ("cell://math.example", {}, "E_CANON_NAME"),
         ("cell://user@math.example/pi", {}, "E_PARSE_URI"),
         ("cell://math.example:443/pi", {}, "E_PARSE_URI"),
-        # Userinfo and ports are outer-grammar failures (SPEC 5.1; DEFECTS.md DEF-02). The reference
-        # tool reports E_CANON_NAME for these.
+        # Userinfo and ports are outer-grammar failures (SPEC 5.1; DEFECTS.md DEF-02).
         ("cell://user@rates.example.org/fx_rate?base=EUR", {"base": "string"}, "E_PARSE_URI"),
         ("cell://rates.example.org:443/fx_rate?base=EUR", {"base": "string"}, "E_PARSE_URI"),
         ("cell://rates.example.org:/fx_rate", {}, "E_PARSE_URI"),
@@ -132,8 +131,7 @@ class UriTest(unittest.TestCase):
         ("cell://10.0.0.1/f", {}, "E_CANON_NAME"),
         ("cell:///f", {}, "E_CANON_NAME"),
         ("cell://x.example/f?B=1&c", {"a": "number"}, "E_PARSE_URI"),
-        # Deliberate divergence (DEFECTS.md, URI-1): the outer grammar is checked before names,
-        # as SPEC 5.4 orders it; the reference tool reports E_CANON_NAME here.
+        # The outer grammar is checked entirely before any name (SPEC 5.4 step 1; DEFECTS.md DEF-01).
         ("cell://X.example/f?c", {"a": "number"}, "E_PARSE_URI"),
         # spec-0.2.0 blobs (SPEC 3.7, 5.2): ':' is literal, '/' and '+' are percent-encoded.
         # Codes confirmed against the reference tool.

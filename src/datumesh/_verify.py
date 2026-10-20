@@ -27,7 +27,8 @@ class VerifyResult:
     too) when ok, else None. ``hash``: the receipt hash once the receipt is in
     canonical form (steps 1-3 passed), else None. ``key``: the ``computed_by``
     value when ok. ``detail``: human-readable text. ``path``: where the
-    failure is (a JSON path) or None.
+    failure is (a JSON path) or None. ``blob_checked``: True only when blob
+    content was supplied and step 7.7 ran and passed (the level is unchanged).
     """
 
     ok: bool
@@ -37,6 +38,7 @@ class VerifyResult:
     key: Optional[str]
     detail: str
     path: Optional[str]
+    blob_checked: bool = False
 
 
 def load(obj: Any, path: str = "$") -> Any:
@@ -166,10 +168,11 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
     validity windows), or a list of those; the first source that covers the
     ``computed_by`` host is used. ``recompute`` (optional) enables step 7:
     ``{"descriptor": ..., "inputs": {hash: receipt text}, "value": {"type", "value"}}``.
-    ``blob`` (optional): the content bytes of a blob value. When the receipt's
-    ``type`` is ``blob``, step 7.7 checks the content's length and SHA-256
-    (after step 7 if ``recompute`` is given, else directly after step 6); for
-    any other type it is ignored. The level stays ``signed`` or ``recomputed``.
+    ``blob`` (optional): the content bytes of a blob value. Step 7.7 then runs
+    last (after step 7 if ``recompute`` is given, else directly after step 6):
+    the receipt's ``type`` must be ``blob`` (E_SCHEMA otherwise) and the content
+    must have the blob's length and SHA-256 (E_BLOB_MISMATCH). The level stays
+    ``signed`` or ``recomputed``; ``blob_checked`` reports that 7.7 passed.
 
     Never raises for an invalid receipt or bad key material: the outcome is in
     the returned :class:`VerifyResult`. Raises TypeError only for arguments of
@@ -188,10 +191,14 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
         if recompute is not None:
             _recompute(r, recompute, sources)
             level, detail = "recomputed", "fully verified by recomputation"
-        if blob is not None and r["type"] == "blob":
+        checked = False
+        if blob is not None:
+            if r["type"] != "blob":
+                fail("E_SCHEMA", f"content was supplied for a {r['type']} value, not a blob", "$.type")
             check_blob_content(r, bytes(blob))
             detail += "; blob content matches"
-        return VerifyResult(True, "OK", level, h, r["computed_by"], detail, None)
+            checked = True
+        return VerifyResult(True, "OK", level, h, r["computed_by"], detail, None, checked)
     except DatumeshError as e:
         h = h or getattr(e, "receipt_hash", None)
         return VerifyResult(False, e.code, None, h, None, e.detail, e.path)
