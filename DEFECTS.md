@@ -431,6 +431,8 @@ outcomes without a receipt have nothing to bind. This library conforms (317 vect
 | DEF-35 | Resolved: the vectors carry `blob_checked` (it was a generator bug). |
 | DEF-36 | Resolved: 5.5 now says what this library does. The exact form of a request (64 lowercase hex, an instant) is still implied rather than stated. |
 | DEF-37 | Decided by the spec author as written: the binding, `asof` included, applies to `stale` too. Closed. |
+
+**Commit 240a830**: DEF-37 is resolved by a new rule in 5.5 step 5: when the request carried `asof`, an `ok` receipt's `asof` equals it and a `stale` receipt's `asof` is at or before it (instants compare as strings; D31). New vectors `envelope/stale-earlier-asof` and `invalid/envelope-stale-later-asof` (319 in all). This library implements it.
 | DEF-38 | Open (minor): what `parse` does with a type outside the six is still implied. |
 
 ## Entries written at commit 0c7accc
