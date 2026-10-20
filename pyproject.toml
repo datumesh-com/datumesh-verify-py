@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datumesh"
-version = "0.1.1"
-description = "Verify Datumesh receipts (spec-0.1.1): RFC 8785 canonical JSON, Ed25519 signatures, cell URIs, key documents."
+version = "0.2.0"
+description = "Verify Datumesh receipts (spec-0.2.0): RFC 8785 canonical JSON, Ed25519 signatures, blobs, units, cell URIs, response envelopes, key documents."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Datumesh" }]
-keywords = ["datumesh", "spec-0.1.1", "receipt", "verification", "ed25519", "rfc8785", "jcs", "canonical-json"]
+keywords = ["datumesh", "spec-0.2.0", "receipt", "verification", "ed25519", "rfc8785", "jcs", "canonical-json"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -30,7 +30,7 @@ dependencies = ["pynacl>=1.5.0"]
 [project.urls]
 Homepage = "https://datumesh.com"
 Repository = "https://github.com/datumesh-com/datumesh-verify-py"
-"Specification (spec-0.1.1)" = "https://github.com/datumesh-com/datumesh-spec/blob/spec-0.1.1/SPEC.md"
+"Specification (spec-0.2.0)" = "https://github.com/datumesh-com/datumesh-spec/blob/spec-0.2.0/SPEC.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
