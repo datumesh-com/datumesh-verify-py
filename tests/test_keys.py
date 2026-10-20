@@ -282,6 +282,18 @@ class FetchKeysTest(unittest.TestCase):
         with mock.patch.object(_keys, "_fetch_url", lambda *a, **k: (None, None)):
             self.assertEqual(datumesh.fetch_keys(HOST).code, "E_KEY_UNAVAILABLE")
 
+    def test_response_for_a_host_that_is_not_a_dns_name(self) -> None:
+        # SPEC 9.3 (spec-0.2.1, 58eb0d9): a response offered for a host that is not a DNS name
+        # cannot satisfy 9.2, so a 200 is E_KEY_DOC whatever its body; any other status is still
+        # E_KEY_UNAVAILABLE. Confirmed against the reference tool.
+        for host in ("Rates.example.org", "localhost", "10.0.0.1", "rates.example.org:443", "Bad Host"):
+            doc = DOC_TEXT.replace(HOST, host)
+            for status, body, code in ((200, doc, "E_KEY_DOC"), (200, DOC_TEXT, "E_KEY_DOC"), (200, None, "E_KEY_DOC"),
+                                       (200, "x", "E_KEY_DOC"), (404, None, "E_KEY_UNAVAILABLE"),
+                                       (301, None, "E_KEY_UNAVAILABLE"), (None, None, "E_KEY_UNAVAILABLE")):
+                with self.subTest(host=host, status=status, body=str(body)[:10]):
+                    self.assertEqual(keys_from_response(host, status, body).code, code)
+
     def test_fetch_keys_invalid_host_without_network(self) -> None:
         with mock.patch.object(_keys, "_fetch_url", side_effect=AssertionError("network used")):
             for host in ("localhost", "Rates.example.org", "127.0.0.1", "a/b.example"):
