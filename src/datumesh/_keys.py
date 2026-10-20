@@ -123,18 +123,20 @@ def keys_from_response(host: str, status: Optional[int], body: Union[str, bytes,
     ``status`` is the HTTP status, or None for a network, DNS, TLS or timeout
     failure. Any status other than 200 (redirects and 404 included) is
     E_KEY_UNAVAILABLE; a 200 whose body is not a valid key document for
-    ``host`` is E_KEY_DOC. Never raises.
+    ``host``, or any 200 for a host that is not a DNS name, is E_KEY_DOC.
+    Never raises.
     """
     if not isinstance(host, str):
         return KeysResult(False, "E_KEY_UNAVAILABLE", None, f"host must be a str, not {type(host).__name__}")
-    try:
-        lx.check_dns_name(host, "host")
-    except DatumeshError as e:
-        return KeysResult(False, "E_KEY_UNAVAILABLE", host, f"cannot retrieve keys for an invalid host: {e.detail}")
     if status is None:
         return KeysResult(False, "E_KEY_UNAVAILABLE", host, "network, DNS, TLS or timeout failure")
     if isinstance(status, bool) or not isinstance(status, int) or status != 200:
         return KeysResult(False, "E_KEY_UNAVAILABLE", host, f"HTTP status {status!r}")
+    try:
+        lx.check_dns_name(host, "host")
+    except DatumeshError as e:
+        # SPEC 9.3: a response offered for a host that is not a DNS name cannot satisfy 9.2.
+        return _doc_error(host, f"a document for a host that is not a DNS name cannot satisfy 9.2: {e.detail}")
     if body is None:
         return _doc_error(host, "200 response without a body")
     if not isinstance(body, (str, bytes, bytearray, memoryview)):

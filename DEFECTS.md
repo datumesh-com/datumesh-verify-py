@@ -422,6 +422,20 @@ tests each statement, and its 76 cases agree with the reference tool.
 
 Remaining open: DEF-16(b), DEF-17 (null descriptor), DEF-34 (tags), DEF-39 below.
 
+**Commit 58eb0d9** (339 vectors). 9.3 now says keys are resolved only for DNS names: `fetch_keys`
+does not fetch for any other host (`E_KEY_UNAVAILABLE`, as before), but interpreting a response
+offered for such a host gives `E_KEY_DOC` (new vector `invalid/keys-host-not-dns-name`). This
+library gave `E_KEY_UNAVAILABLE` there (DEF-16(c)) and now gives `E_KEY_DOC` for a 200, whatever
+its body; any other status stays `E_KEY_UNAVAILABLE` (the reference agrees). The other
+clarifications were already followed: more than 64 keys is `E_KEY_DOC` (4.5); a mesh host is a DNS
+name (`uri_to_https` checks it); a malformed request is a caller error (`TypeError`/`ValueError`,
+5.5), which also resolves DEF-36; the `recompute` object (11) matches DEF-17's handling of an
+absent descriptor and missing inputs; Ed25519 uses libsodium (PyNaCl), whose cofactorless check
+accepts the mixed-order vector. 6.1 (b1924f5) applies the nesting limit to parsed values too,
+which resolves DEF-39 as this library already did. Still open: DEF-16(b) (a non-integer status is
+now excluded from vectors by 11, but not defined for libraries), whether a `null` descriptor is
+absent (DEF-17), and DEF-34 (tags).
+
 ## DEF-39. 6.1: the nesting limit for values that are not text
 
 **Problem.** 6.1 limits the nesting of a *text*. `canonicalize`, `verify` and `jcs` also take
