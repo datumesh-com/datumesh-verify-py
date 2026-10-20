@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import _lexical as lx
 from ._errors import fail
+from ._json import sort_key
 from ._model import SLICE, validate_ref
 
 SCHEME = "cell://"
@@ -48,10 +49,17 @@ def _encode(text: str) -> str:
 
 
 def _declared_types(signature: Any) -> Dict[str, str]:
-    args = signature.get("args") if isinstance(signature, dict) else None
-    if not isinstance(args, dict) or not all(
-            isinstance(a, dict) and isinstance(a.get("type"), str) for a in args.values()):
-        raise TypeError('signature must be {"args": {<name>: {"type": <type name>, ...}}, ...}')
+    """SPEC 5.4 step 5: read the argument types; an unreadable signature is E_SCHEMA."""
+    if not isinstance(signature, dict):
+        fail("E_SCHEMA", "the signature is an object", "signature")
+    args = signature.get("args")
+    if not isinstance(args, dict):
+        fail("E_SCHEMA", "the signature has an args object", "signature" if "args" not in signature
+             else "signature.args")
+    for name in sorted(args, key=sort_key):
+        a = args[name]
+        if not isinstance(a, dict) or not isinstance(a.get("type"), str):
+            fail("E_SCHEMA", "an argument declaration is an object with a string type", f"signature.args.{name}")
     return {name: a["type"] for name, a in args.items()}
 
 
@@ -61,12 +69,11 @@ def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
     ``signature`` is the ``signature`` member of the function's descriptor; it
     supplies each argument's type. As SPEC 5.4 says, it is taken as given (it comes
     from a descriptor already checked under section 7): only its argument types are
-    read, and a signature from which they cannot be read is a TypeError. Checks run
-    in the order of SPEC 5.4 and the first failure is raised as DatumeshError.
+    read, in step 5, and a signature from which they cannot be read is E_SCHEMA.
+    Checks run in the order of SPEC 5.4 and the first failure is raised as DatumeshError.
     """
     if not isinstance(uri, str):
         raise TypeError(f"uri must be a str, not {type(uri).__name__}")
-    declared = _declared_types(signature)
 
     # 1. Outer grammar.
     if not uri.startswith(SCHEME) or "#" in uri:
@@ -120,7 +127,8 @@ def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
     if len(params) > lx.LIMIT_ARGS:
         fail("E_CANON_LIMIT", f"more than {lx.LIMIT_ARGS} arguments", "uri.query")
 
-    # 5. Arguments against the signature: unknown, then missing.
+    # 5. The signature (read, not checked: SPEC 5.4), then the arguments against it: unknown, then missing.
+    declared = _declared_types(signature)
     present = {name for name, _ in params}
     for name, _ in params:
         if name not in declared:

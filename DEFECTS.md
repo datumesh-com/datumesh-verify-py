@@ -1,7 +1,7 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Two sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22) and, at the end, `spec-0.2.0` (step 0.2b,
-DEF-23 onwards). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
+Three sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.2.1` (status of every entry
+at that revision, and DEF-39), then `spec-0.2.0` (DEF-23 to DEF-38). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
 `spec-0.2.0` section says so.
 
 # spec-0.1.1
@@ -386,6 +386,53 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
   reason. Worth a sentence in 11 for harness authors.
 
 ---
+
+# spec-0.2.1
+
+Spec commit `bfe5a38` (the `spec-0.2.1` draft, text-only; not yet tagged). It writes down most of the
+rules this log asked for. This library is 0.2.1 and conforms (338 vectors). Two changes were needed:
+the 64-level nesting limit of 6.1 (checked after the byte order mark and UTF-8, before anything
+else), and an unreadable signature in `parse_uri` is now `E_SCHEMA` in step 5 rather than a
+`TypeError`. Everything else the revision states was already done; `tests/test_spec_0_2_1.py`
+tests each statement, and its 76 cases agree with the reference tool.
+
+| Entry | Status at bfe5a38 |
+|---|---|
+| DEF-02 | Fully resolved: 5.1 states the path split and that a value may contain `=`. |
+| DEF-03 | Resolved: 5.4 step 3 spells out the per-parameter order (`asof` first, then name, reserved, duplicate, order). |
+| DEF-05 | Resolved: 5.4 step 7. |
+| DEF-06 | Resolved: 4.5 "Containers" (count before members). |
+| DEF-07 | Resolved: 4.5 (`inputs`: entries, order, count). |
+| DEF-08 | Resolved: 4.5 "Values and names". |
+| DEF-09 | Resolved: 4.5 "Function names". |
+| DEF-10 | Resolved: 8.1 licence grammar. |
+| DEF-11 | Resolved: 9.1. |
+| DEF-12 | Resolved: section 3 (`value` not string or boolean is `E_SCHEMA`). |
+| DEF-13 | Resolved: 6.1 (underflow is not an error). |
+| DEF-14 | Resolved: 3.5 (15.1 normalisation data or later; bring your own). |
+| DEF-15 | Resolved: 9.2 exact members; an invalid curve point is not a document error. |
+| DEF-16 | (a) and (c) resolved (9.3); (b) a non-integer status is still not covered. |
+| DEF-17 | Hash-before-canonical resolved (7.1). Still open: whether a `null` descriptor is "absent" (this library: `E_FN_UNAVAILABLE`) and whether a descriptor may be given as text. |
+| DEF-19 | Resolved: 7.2. |
+| DEF-20 | Resolved: step 4 runs in the listed order. |
+| DEF-21 | Resolved: 3.3. |
+| DEF-22 | Resolved: 11 (`key_ids` order, U+2028/U+2029). |
+| DEF-36 | Mostly resolved since 1400247; the form of a well-formed request is still implied. |
+| DEF-38 | Resolved: 5.4 step 5 (`E_SCHEMA`, after steps 1-4, JCS order; unknown types `E_CANON_TYPE` when a value is read). |
+
+Remaining open: DEF-16(b), DEF-17 (null descriptor), DEF-34 (tags), DEF-39 below.
+
+## DEF-39. 6.1: the nesting limit for values that are not text
+
+**Problem.** 6.1 limits the nesting of a *text*. `canonicalize`, `verify` and `jcs` also take
+already-parsed values, which have no text; the rule does not say whether a parsed value nested more
+than 64 levels deep is acceptable.
+
+**Resolution.** Applied to parsed values too: a value whose text would have more than 64 levels is
+`E_PARSE_JSON`, so the result does not depend on whether a caller passes text or a parsed object.
+
+**Proposed wording (6.1).** "The same limit applies to a value given to an implementation already
+parsed: more than 64 nested arrays and objects is `E_PARSE_JSON`."
 
 # spec-0.2.0
 

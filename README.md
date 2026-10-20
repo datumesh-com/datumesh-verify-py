@@ -1,10 +1,10 @@
 # datumesh
 
-Verify [Datumesh](https://datumesh.com) receipts in Python. A receipt is a signed answer for one addressable data cell; this library checks its canonical form (RFC 8785 JSON) and its Ed25519 signature against the signer's published keys, and optionally the recomputation checks (function descriptor, input receipts, and a value you computed) and the content of a blob value, as the [Datumesh specification](https://github.com/datumesh-com/datumesh-spec/blob/spec-0.2.0/SPEC.md) (revision `spec-0.2.0`) defines. It also checks a mesh's response envelope and resolves the unit of a cell's value.
+Verify [Datumesh](https://datumesh.com) receipts in Python. A receipt is a signed answer for one addressable data cell; this library checks its canonical form (RFC 8785 JSON) and its Ed25519 signature against the signer's published keys, and optionally the recomputation checks (function descriptor, input receipts, and a value you computed) and the content of a blob value, as the [Datumesh specification](https://github.com/datumesh-com/datumesh-spec/blob/spec-0.2.1/SPEC.md) (revision `spec-0.2.1`) defines. It also checks a mesh's response envelope and resolves the unit of a cell's value.
 
 ```sh
 pip install datumesh
-git clone --depth 1 --branch spec-0.2.0 https://github.com/datumesh-com/datumesh-spec && cd datumesh-spec
+git clone --depth 1 --branch spec-0.2.1 https://github.com/datumesh-com/datumesh-spec && cd datumesh-spec
 ```
 
 ```python

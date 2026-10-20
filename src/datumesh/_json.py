@@ -4,11 +4,30 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any, Dict, List, Tuple, Union
 
 from ._errors import DatumeshError, fail
 
 JSONText = Union[str, bytes, bytearray, memoryview]
+
+#: SPEC 6.1: at most 64 levels of ``[`` and ``{`` open at once, counted outside strings.
+MAX_DEPTH = 64
+# A string (possibly unterminated) or a bracket; brackets inside strings are skipped with the string.
+_DEPTH_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"?|[\[\]{}]', re.S)
+
+
+def _too_deep(text: str) -> bool:
+    depth = 0
+    for m in _DEPTH_TOKEN.finditer(text):
+        c = m.group()
+        if c in "[{":
+            depth += 1
+            if depth > MAX_DEPTH:
+                return True
+        elif c in "]}":
+            depth -= 1
+    return False
 
 
 class _Duplicate(Exception):
@@ -49,7 +68,11 @@ def parse_json(data: JSONText, path: str = "$") -> Any:
     ``data`` is bytes (must be UTF-8 without a byte order mark) or str (must not
     start with U+FEFF). Duplicate member names raise E_PARSE_DUPLICATE_KEY; every
     other failure (syntax, lone surrogates, NaN/Infinity, numbers outside the
-    double range, invalid UTF-8) raises E_PARSE_JSON. Numbers become floats.
+    double range, invalid UTF-8, nesting deeper than 64) raises E_PARSE_JSON.
+    Numbers become floats. Failures are reported in the order of SPEC 6.1: byte
+    order mark, invalid UTF-8, nesting, then the first in text order of a syntax
+    error, NaN/Infinity, an overflowing number or a duplicate member (detected when
+    its object closes), and lone surrogates last.
     """
     if isinstance(data, (bytes, bytearray, memoryview)):
         raw = bytes(data)
@@ -65,6 +88,8 @@ def parse_json(data: JSONText, path: str = "$") -> Any:
             fail("E_PARSE_JSON", "byte order mark", path)
     else:
         raise TypeError(f"JSON text must be str or bytes, not {type(data).__name__}")
+    if _too_deep(text):
+        fail("E_PARSE_JSON", f"nesting deeper than {MAX_DEPTH} levels", path)
     try:
         value = json.loads(
             text,
@@ -102,10 +127,15 @@ def number_texts(data: JSONText) -> Dict[str, str]:
 
 def check_json_value(value: Any, path: str = "$") -> None:
     """Check that an already-parsed value is I-JSON: dict/list/str/float/int/bool/None only,
-    string keys, no lone surrogates, finite numbers within the double range."""
-    stack: List[Tuple[Any, str]] = [(value, path)]
+    string keys, no lone surrogates, finite numbers within the double range, and at most
+    64 levels of arrays and objects (as its text would be, SPEC 6.1)."""
+    stack: List[Tuple[Any, str, int]] = [(value, path, 0)]
     while stack:
-        v, p = stack.pop()
+        v, p, depth = stack.pop()
+        if isinstance(v, (dict, list)):
+            depth += 1
+            if depth > MAX_DEPTH:
+                fail("E_PARSE_JSON", f"nesting deeper than {MAX_DEPTH} levels", p)
         if v is None or isinstance(v, bool):
             continue
         if isinstance(v, str):
@@ -125,10 +155,10 @@ def check_json_value(value: Any, path: str = "$") -> None:
                     fail("E_PARSE_JSON", f"member name {k!r} is not a string", p)
                 if _has_surrogate(k):
                     fail("E_PARSE_JSON", "lone surrogate in member name", p)
-                stack.append((item, f"{p}.{k}"))
+                stack.append((item, f"{p}.{k}", depth))
         elif isinstance(v, list):
             for i, item in enumerate(v):
-                stack.append((item, f"{p}[{i}]"))
+                stack.append((item, f"{p}[{i}]", depth))
         else:
             fail("E_PARSE_JSON", f"{type(v).__name__} is not a JSON value", p)
 
