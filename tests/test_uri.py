@@ -10,7 +10,12 @@ import datumesh
 from datumesh import DatumeshError, format_uri, parse_uri
 
 FX = {"args": {"base": {"type": "string", "valid": False}, "date": {"type": "date", "valid": True},
-               "quote": {"type": "string", "valid": False}}, "returns": "number"}
+               "quote": {"type": "string", "valid": False}},
+      "returns": {"type": "number", "unit": {"of": {"arg": "quote"}, "per": {"arg": "base"}}}}
+
+
+def _decl(t: str) -> dict:
+    return {"type": t, "unit": "1", "valid": False} if t == "number" else {"type": t, "valid": False}
 
 
 class UriTest(unittest.TestCase):
@@ -23,7 +28,7 @@ class UriTest(unittest.TestCase):
                 self.assertEqual(format_uri(ref), v["input"])
                 self.assertEqual(parse_uri(format_uri(v["object"]), v["signature"]), v["object"])
                 n += 1
-        self.assertEqual(n, 10)
+        self.assertEqual(n, 11)
 
     def test_invalid_vectors(self) -> None:
         for v in vectors_of("uri", False):
@@ -46,12 +51,16 @@ class UriTest(unittest.TestCase):
         self.assertEqual(cm.exception.code, "E_CANON_NAME")
 
     def test_parse_validates_signature(self) -> None:
-        bad = {"args": {"n": {"type": "number", "valid": True}}, "returns": "number"}
+        bad = {"args": {"n": {"type": "number", "unit": "1", "valid": True}}, "returns": "boolean"}
         with self.assertRaises(DatumeshError) as cm:
             parse_uri("cell://math.example/f?n=1", bad)
         self.assertEqual(cm.exception.code, "E_CANON_TYPE")
         with self.assertRaises(TypeError):
-            parse_uri(b"cell://math.example/pi", {"args": {}, "returns": "number"})  # type: ignore[arg-type]
+            parse_uri(b"cell://math.example/pi", {"args": {}, "returns": "boolean"})  # type: ignore[arg-type]
+        # spec-0.2.0: a number without a unit is not a canonical signature (SPEC 7, 7.1).
+        with self.assertRaises(DatumeshError) as cm:
+            parse_uri("cell://math.example/pi", {"args": {}, "returns": "number"})
+        self.assertEqual(cm.exception.code, "E_CANON_UNIT")
 
     def test_https_mapping(self) -> None:
         u = "cell://rates.example.org/fx_rate?base=EUR&date=*&quote=USD"
@@ -120,11 +129,21 @@ class UriTest(unittest.TestCase):
         # Deliberate divergence (DEFECTS.md, URI-1): the outer grammar is checked before names,
         # as SPEC 5.4 orders it; the reference tool reports E_CANON_NAME here.
         ("cell://X.example/f?c", {"a": "number"}, "E_PARSE_URI"),
+        # spec-0.2.0 blobs (SPEC 3.7, 5.2): ':' is literal, '/' and '+' are percent-encoded.
+        # Codes confirmed against the reference tool.
+        ("cell://f.example/d?file=" + "a" * 64 + ":17:text%2Fplain", {"file": "blob"}, None),
+        ("cell://f.example/d?file=" + "a" * 64 + "%3A17%3Atext%2Fplain", {"file": "blob"}, "E_CANON_PERCENT"),
+        ("cell://f.example/d?file=" + "a" * 64 + ":17:text/plain", {"file": "blob"}, "E_CANON_PERCENT"),
+        ("cell://f.example/d?file=" + "a" * 64 + ":17:application/ld+json", {"file": "blob"}, "E_CANON_PERCENT"),
+        ("cell://f.example/d?file=*", {"file": "blob"}, None),
+        ("cell://f.example/d?file=%2A", {"file": "blob"}, "E_CANON_BLOB"),
+        ("cell://f.example/d?file=", {"file": "blob"}, "E_CANON_BLOB"),
+        ("cell://f.example/d?file=" + "A" * 64 + ":17:text%2Fplain", {"file": "blob"}, "E_CANON_BLOB"),
     ]
 
     def test_edge_cases(self) -> None:
         for uri, types, code in self.CASES:
-            sig = {"args": {k: {"type": t, "valid": False} for k, t in types.items()}, "returns": "number"}
+            sig = {"args": {k: _decl(t) for k, t in types.items()}, "returns": "boolean"}
             with self.subTest(uri[:80]):
                 if code is None:
                     parse_uri(uri, sig)

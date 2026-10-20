@@ -125,7 +125,7 @@ class StringRulesTest(unittest.TestCase):
         self.assertEqual(cm.exception.code, "E_PARSE_JSON")
 
     def test_body_rules(self) -> None:
-        desc = {"code": {"body": "", "lang": "expr"}, "inputs": [], "signature": {"args": {}, "returns": "number"}}
+        desc = {"code": {"body": "", "lang": "expr"}, "inputs": [], "signature": {"args": {}, "returns": "string"}}
         for body, code in {"a\tb\n": None, "a\r\nb": "E_CANON_STRING", "a" * 1048576: None,
                            "a" * 1048577: "E_CANON_LIMIT", "u" + chr(0x308): "E_CANON_STRING"}.items():
             d = json.loads(json.dumps(desc))

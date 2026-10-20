@@ -61,6 +61,9 @@ OUTPUTS = {
     "keyid": ["key_id"],
     "keys": ["key_ids"],
     "receipt": ["canonical", "sha256", "sig", "level"],
+    "unit": ["unit"],
+    # envelope: outcome, and trust and receipt_hash only when the envelope carries a receipt
+    "envelope": ["outcome", "trust", "receipt_hash"],
 }
 
 
@@ -68,5 +71,12 @@ def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
     exp: Dict[str, Any] = {"id": v["id"], "error": v.get("error")}
     if v["valid"]:
         for k in OUTPUTS[v["kind"]]:
+            if v["kind"] == "envelope" and k != "outcome" and k not in v:
+                continue
             exp[k] = v[k]
     return exp
+
+
+def blob_of(v: Dict[str, Any]) -> Any:
+    """A receipt vector's blob content (``blob_hex``) as bytes, or None."""
+    return bytes.fromhex(v["blob_hex"]) if "blob_hex" in v else None

@@ -8,7 +8,7 @@ import subprocess
 import sys
 import unittest
 
-from util import ROOT, env_keys, expected_output, load_vectors, runner, vectors_of
+from util import ROOT, blob_of, env_keys, expected_output, load_vectors, runner, vectors_of
 
 import datumesh
 
@@ -16,7 +16,13 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        self.assertEqual(sum(counts.values()), 183, counts)
+        self.assertEqual(sum(counts.values()), 290, counts)
+        self.assertEqual(counts["unit"], 10, counts)
+        self.assertEqual(counts["envelope"], 35, counts)
+        # every vector's id is its path, and every kind is one the runner knows
+        for v in load_vectors():
+            self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",
+                                      "receipt", "unit", "envelope"), v["id"])
 
     def test_every_vector_in_process(self) -> None:
         run = runner().run_vector
@@ -61,7 +67,7 @@ class ConformanceTest(unittest.TestCase):
     def test_receipts_through_verify(self) -> None:
         for v in vectors_of("receipt"):
             with self.subTest(v["id"]):
-                res = datumesh.verify(v["input"], env_keys(v["keys"]), v.get("recompute"))
+                res = datumesh.verify(v["input"], env_keys(v["keys"]), v.get("recompute"), blob_of(v))
                 if v["valid"]:
                     self.assertTrue(res.ok, res)
                     self.assertEqual(res.code, "OK")
@@ -70,8 +76,10 @@ class ConformanceTest(unittest.TestCase):
                     self.assertEqual(res.key, json.loads(v["input"])["computed_by"])
                     self.assertIsNone(res.path)
                     # bytes input and parsed input give the same result
-                    self.assertEqual(datumesh.verify(v["input"].encode(), env_keys(v["keys"]), v.get("recompute")), res)
-                    self.assertEqual(datumesh.verify(json.loads(v["input"]), env_keys(v["keys"]), v.get("recompute")), res)
+                    self.assertEqual(datumesh.verify(v["input"].encode(), env_keys(v["keys"]), v.get("recompute"),
+                                                     blob_of(v)), res)
+                    self.assertEqual(datumesh.verify(json.loads(v["input"]), env_keys(v["keys"]), v.get("recompute"),
+                                                     blob_of(v)), res)
                     self.assertEqual(datumesh.receipt_hash(v["input"]), v["sha256"])
                     self.assertEqual(datumesh.receipt_payload(v["input"]).decode(), v["canonical"])
                 else:
@@ -89,6 +97,35 @@ class ConformanceTest(unittest.TestCase):
             with self.subTest(v["id"]), self.assertRaises(datumesh.DatumeshError) as cm:
                 datumesh.cell_hash(v.get("input") if "input" in v else bytes.fromhex(v["input_hex"]))
             self.assertEqual(cm.exception.code, v["error"])
+
+    def test_unit_vectors_through_resolved_unit(self) -> None:
+        for v in vectors_of("unit"):
+            obj = json.loads(v["input"])
+            with self.subTest(v["id"]):
+                if v["valid"]:
+                    self.assertEqual(datumesh.resolved_unit(obj["descriptor"], obj["cell"]), v["unit"])
+                    # JSON text works too
+                    self.assertEqual(datumesh.resolved_unit(json.dumps(obj["descriptor"]), json.dumps(obj["cell"])),
+                                     v["unit"])
+                else:
+                    with self.assertRaises(datumesh.DatumeshError) as cm:
+                        datumesh.resolved_unit(obj["descriptor"], obj["cell"])
+                    self.assertEqual(cm.exception.code, v["error"])
+
+    def test_envelope_vectors_through_check_envelope(self) -> None:
+        for v in vectors_of("envelope"):
+            with self.subTest(v["id"]):
+                res = datumesh.check_envelope(v["status"], v["input"], env_keys(v["keys"]))
+                self.assertIsInstance(res, datumesh.EnvelopeResult)
+                self.assertEqual(datumesh.check_envelope(v["status"], v["input"].encode(), env_keys(v["keys"])), res)
+                if v["valid"]:
+                    self.assertTrue(res.ok, res)
+                    self.assertEqual((res.code, res.outcome, res.trust, res.receipt_hash, res.path),
+                                     ("OK", v["outcome"], v.get("trust"), v.get("receipt_hash"), None))
+                else:
+                    self.assertFalse(res.ok)
+                    self.assertEqual(res.code, v["error"])
+                    self.assertEqual((res.outcome, res.trust, res.receipt_hash), (None, None, None))
 
     def test_invalid_vectors_raise_exact_code(self) -> None:
         for v in load_vectors():
