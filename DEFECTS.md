@@ -389,6 +389,40 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 
 # spec-0.2.0
 
+## Status at commit 2a77580
+
+The spec moved from `0c7accc` to `2a77580`, which takes up most of the entries below. This library
+now conforms to `2a77580` (317 vectors). Against the reference tool at `2a77580`, 20,000 mutated
+vectors (four seeds) and the 447 cases of the test tables give no disagreement at all: the URI
+divergences of DEF-01/DEF-02 are gone because the reference now follows the prose. (One table case,
+a descriptor given as text with a duplicate member, cannot be expressed as a vector member and was
+not compared.)
+
+| Entry | Status at 2a77580 |
+|---|---|
+| DEF-01 | Resolved: 5.4 step 1 checks the whole outer grammar before any name; reference agrees. |
+| DEF-02 | Resolved: 5.1 defines the authority; userinfo and ports are `E_PARSE_URI`; new vectors. |
+| DEF-04 | Resolved the other way: `parse` takes the signature as given. This library no longer validates it (DEF-38). |
+| DEF-10 | Open for 8.1; the `quote.authorise` rule is now spelled out in 5.5. |
+| DEF-17 | Partly: units.md 3 now checks the hash before the descriptor, as 7.1 does; 7.1 itself still does not say it. |
+| DEF-18 | Resolved: 7.5 verifies the input receipt, then checks its hash. |
+| DEF-23 | Resolved, with a changed order: the cell (structure, canonical), then the hash, then the descriptor (structure, canonical), then substitution; only referenced arguments are examined; 10.2 has a "unit" marker. |
+| DEF-24 | Resolved: 7 has a "Check order" paragraph. |
+| DEF-25 | Resolved: units.md 1 says `{"arg": "Bad"}` is `E_CANON_UNIT` and other shapes are `E_SCHEMA` in step 2. |
+| DEF-26 | Resolved in units.md 2.4 (year `0000`, the 64 limit is `E_CANON_UNIT`, an index unit is a literal but not a rate side). SPEC 7.1 still calls a literal "a string listed in units.md". |
+| DEF-27 | Resolved: verification never resolves units (7.1, units.md 3). |
+| DEF-28 | Resolved, with a change: content for a non-blob value is now `E_SCHEMA`; 7.7 runs last; `blob_checked` reports it. But see DEF-35. |
+| DEF-29 | Resolved, with a change: integer members are written `0` or `[1-9][0-9]*`; `30.0`, `3e1`, `-0` are `E_ENVELOPE`. The check needs the number's source text, which this library now reads. |
+| DEF-30 | Resolved: 5.5 step 2. |
+| DEF-31 | Resolved: amount limit, authorise rule and withdrawn currencies stated; new outcome `bad_request` (400) with the URI codes; `error` may not carry `E_ENVELOPE`. |
+| DEF-32 | Resolved: 5.5 step 5 binds the receipt to the request (cell id, and `asof` when asked). `check_envelope` takes `request`. See DEF-36, DEF-37. |
+| DEF-33 | Resolved for the `unit` input shape (11). |
+| DEF-34 | Open until the tag exists. |
+
+New entries for `2a77580`: DEF-35 to DEF-38, at the end of this section.
+
+## Entries written at commit 0c7accc
+
 Spec revision: commit `0c7accc` of datumesh-spec (the `spec-0.2.0` draft, to be tagged once both
 libraries conform). Written from SPEC.md, `units.md`, the schemas (including
 `envelope.schema.json`) and the vectors only. `tools/canon.py` was again used only as a black box:
@@ -653,5 +687,67 @@ must compare `receipt.cell` with `parse_uri(...)` of its request.
 
 Not a SPEC.md defect, but it affects this library's README: the README tells users to
 `git clone --branch spec-0.2.0`, which fails until the commit is tagged. The packaging test runs the
-README example against the `spec/` submodule at `0c7accc` and accepts either that commit or the tag.
+README example against the `spec/` submodule at `0c7accc` and accepts either the commit (now 2a77580) or the tag.
 The package metadata links to `blob/spec-0.2.0/SPEC.md`, which also resolves only once tagged.
+
+## DEF-35. 11: `blob_checked` is an output no vector carries
+
+**Problem (2a77580).** Section 11 lists for receipt vectors "`blob_checked` (true) when `blob_hex` is
+given", and `vector.schema.json` defines the field, but neither valid vector with `blob_hex`
+(`receipt/blob-value`, `receipt/blob-value-recomputed`) contains it. A harness that compares a
+runner's output with exactly the fields of the file cannot see the output that 11 requires, and a
+runner that emits it differs from the file.
+
+**Resolution.** The runner emits `blob_checked` whenever `blob_hex` is given, as 11 says; the
+tests derive the expected value (`true` for valid vectors) from that rule, and would use a
+`blob_checked` field if a vector had one.
+
+**Proposed fix.** Add `"blob_checked": true` to the two vector files (the generator should write
+it), so that the vectors carry every output 11 names.
+
+## DEF-36. 5.5 step 5: the request's own form, and outcomes without a receipt
+
+**Problem.** "A library takes the requested cell id and `asof` as inputs" does not say what a
+malformed request is (a cell id that is not 64 lowercase hex digits, an `asof` that is not an
+instant), nor, explicitly, that step 5 is skipped for outcomes without a receipt.
+
+**Resolution.** The request is the caller's data, not the mesh's statement, so a malformed one is
+a caller error (`TypeError` for a non-mapping, `ValueError` for bad members or extra members), not
+`E_ENVELOPE`. For `not_covered`, `unlicensed`, `payment_required`, `rate_limited`, `bad_request`
+and `error` the request is not compared with anything (the reference agrees: `not_covered` with
+any requested cell id passes).
+
+**Proposed wording (5.5 step 5).** "... Step 5 applies only when there is a receipt. The requested
+cell id is 64 lowercase hex digits and the requested `asof` an instant (3.3); a library rejects a
+request that is not, as a caller error, before examining the envelope."
+
+## DEF-37. 5.5 step 5: `stale` and the requested `asof`
+
+**Problem.** For `stale`, the receipt is "the last receipt the mesh knows for the cell", which
+would normally answer an earlier `asof` than the one requested, yet step 5 says "The same applies
+to the receipt of a `stale` envelope": with an explicit `asof` in the request, a stale receipt
+must have exactly that `asof`. Then `stale` can only be served for requests without `asof`, or by
+a mesh that once answered exactly that `asof`. If that is intended, it is worth saying; if not,
+`stale` needs its own rule (e.g. the receipt's `asof` is not later than the requested one).
+
+**Resolution.** As written, and as the reference does: `asof` equality for `stale` too
+(`stale` with a later requested `asof` is `E_ENVELOPE`).
+
+**Proposed wording.** Either "For `stale`, a request with `asof` is answered only by a receipt with
+that `asof`" (explicit), or "For `stale`, the receipt's `asof` is not later than the requested
+`asof`."
+
+## DEF-38. 5.4: what "taken as given" means for a signature
+
+**Problem.** `parse` "does not check" the signature, but it still has to read argument types from
+it. Not said: what happens when the types cannot be read (no `args`, an argument without a string
+`type`), or when a type is not one of the six.
+
+**Resolution.** A signature whose argument types cannot be read is a caller error (`TypeError`).
+Anything else is used as given: a type outside the six fails when a value is typed with it
+(`E_CANON_TYPE`), and nothing else in the signature is examined (a number argument without a unit,
+`valid: true` on a number, `returns: "number"` are all accepted). The reference agrees on the
+cases it can express (`decimal` is `E_CANON_TYPE`, `blob` types the value as a blob).
+
+**Proposed wording (5.4).** "... `parse` reads only each argument's `type` from it; a value whose
+declared type is not one of the six is `E_CANON_TYPE`."
