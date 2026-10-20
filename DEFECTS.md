@@ -1,5 +1,11 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
+Two sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22) and, at the end, `spec-0.2.0` (step 0.2b,
+DEF-23 onwards). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
+`spec-0.2.0` section says so.
+
+# spec-0.1.1
+
 Spec revision: `spec-0.1.1` (commit 59bd732). This library was written from SPEC.md, the
 schemas and the vectors only. `tools/canon.py` was used as a black box (its `check`, `jcs`,
 `uri` and `verify` commands on inputs I wrote), never read. One disclosure: during the first
@@ -378,3 +384,274 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 - Vector `canonical` strings may contain U+2028 (`jcs/escapes`), which some JSON-lines tooling
   treats as a line break; the conformance runner here escapes all non-ASCII output for that
   reason. Worth a sentence in 11 for harness authors.
+
+---
+
+# spec-0.2.0
+
+Spec revision: commit `0c7accc` of datumesh-spec (the `spec-0.2.0` draft, to be tagged once both
+libraries conform). Written from SPEC.md, `units.md`, the schemas (including
+`envelope.schema.json`) and the vectors only. `tools/canon.py` was again used only as a black box:
+its `check` command over vectors I wrote into a scratch copy of the spec, and its `--help` usage
+text. It never crashed on these inputs, so no traceback (and no source line) was printed this time.
+Nothing under `spec/tests/` was opened.
+
+**All 290 vectors can be reproduced from SPEC.md, units.md, the schemas and the vectors.** None
+needed the reference tool. The reference was used to settle the points below, which no vector
+decides; the expected codes in the case tables of `tests/test_units.py`, `tests/test_envelope.py`
+and `tests/test_blob.py`, and the whole URI table of `tests/test_uri.py` (398 cases in all), were
+run through it, and every one agrees except the URI rows marked as the DEF-01/DEF-02 divergences. `tools/oracle_fuzz.py` now also mutates unit, envelope and blob vectors: 23,000 mutated vectors
+over five seeds gave no disagreement other than the known URI class of DEF-01/DEF-02 (userinfo,
+ports and the empty query, which `spec-0.2.0` and its reference still treat as before).
+
+No deliberate divergence from the reference was added in this step. Open from `spec-0.1.1` and
+unchanged in the `spec-0.2.0` text: DEF-01, DEF-02 (the reference still reports `E_CANON_NAME` for
+userinfo and ports), DEF-17 and DEF-18 (10.1 step 7.5 still says "obtain ... which must hash to the
+listed hash; verify it through step 6", which the vector `receipt-input-invalid` contradicts).
+
+## DEF-23. 7.1 / units.md 3: what resolving a unit checks, and in which order
+
+**Problem.** units.md 3 describes resolution only for well-formed input: substitute the cell's
+argument values into the return unit. It does not say:
+
+(a) that the descriptor must be the cell's function. The vector `invalid/unit-fn-hash-mismatch`
+expects `E_FN_HASH_MISMATCH`, a code the unit rules never mention;
+(b) in which order the cell, the descriptor, the hash and the resolution are checked;
+(c) whether the cell must bind exactly the function's arguments (4.4: "A cell binds every argument
+its function declares, and no others"), or only the ones the unit refers to;
+(d) which codes a referenced argument that is absent or not a string gets (units.md lists only
+`E_CANON_UNIT` and `E_SLICE`);
+(e) for a rate, whether `of` or `per` is resolved first (it decides between `E_SLICE` and
+`E_CANON_UNIT` when both sides are bad).
+
+Also, 10.2 marks codes raised while parsing URIs ("URI") and envelopes ("envelope"), but not codes
+raised while resolving a unit, although resolution raises `E_CANON_UNIT`, `E_SLICE`,
+`E_FN_HASH_MISMATCH`, `E_ARG_MISSING` and `E_ARG_TYPE`.
+
+**Resolution.** As the reference, probed: (b) the structure of the cell, then of the descriptor
+(`E_SCHEMA`, both before anything else), then the cell's canonical form, then the hash
+(`E_FN_HASH_MISMATCH`), then the descriptor's canonical form (units included), then resolution.
+So a descriptor with a bad unit shape and a wrong hash is `E_SCHEMA`, while a descriptor with a bad
+unit literal and a wrong hash is `E_FN_HASH_MISMATCH`. (c) Only referenced arguments are examined:
+a cell missing an unreferenced argument, with an extra argument, or with a mistyped unreferenced
+argument still resolves, and a slice in an unreferenced argument is fine. (d) A referenced argument
+that is absent is `E_ARG_MISSING`; one whose type is not `string` is `E_ARG_TYPE`; a slice marker is
+`E_SLICE`. (e) `of` completely (substitution and the currency check), then `per`.
+
+Note that step 7.1 of verification checks a descriptor in the other order: the hash first, then its
+structure (DEF-17; the reference agrees), so the same bad descriptor is `E_SCHEMA` in one procedure
+and `E_FN_HASH_MISMATCH` in the other. I think (c) is too lax for a protocol that rejects rather
+than repairs: a cell that does not bind its function's arguments is not a cell of that function,
+and giving it a unit is a guess.
+
+**Proposed wording (units.md 3, new first paragraph).** "Resolution takes a descriptor and a cell
+(4.4) and checks, reporting the first failure: the structure of the cell, then of the descriptor
+(`E_SCHEMA`); the cell's canonical form; that the descriptor hashes to `cell.fn_hash`
+(`E_FN_HASH_MISMATCH`); the descriptor's canonical form (section 7). It then substitutes: for each
+argument reference, `of` before `per`, the cell must bind the argument (`E_ARG_MISSING`), not as a
+slice (`E_SLICE`), with type `string` (`E_ARG_TYPE`), and its value must be a literal unit, or on a
+side of a rate a currency code (`E_CANON_UNIT`). Arguments the unit does not refer to are not
+examined." (Or, preferably, check all of 10.1 step 7.2 first.) In 10.2 add a "unit" marker to the
+Step column for these codes, and say in 10.1 step 7.1 whether a descriptor's hash or its structure
+is checked first, the same way in both procedures.
+
+## DEF-24. 7 / 7.1: checks inside a `returns` object, and step 2 versus step 3 for units
+
+**Problem.** "Within a declaration, `type` is checked first (`E_CANON_TYPE`), then `unit`, then
+`valid`" covers argument declarations. For a `returns` object it is not said. Taken literally, "a
+`returns` object whose type is not `number` ... fails with `E_CANON_UNIT`" makes
+`{"type": "decimal", "unit": "1"}` an `E_CANON_UNIT`, but the reference reports `E_CANON_TYPE`.
+Separately, "Any other JSON shape for a unit is `E_SCHEMA`" does not say that this is a step-2
+check made over the whole descriptor before any step-3 check: a descriptor with an invalid
+`code.lang` (`E_CANON_NAME`, earlier in JCS order) and `"unit": 5` is `E_SCHEMA` in the reference.
+
+**Resolution.** As the reference. Step 2 (whole descriptor first): a declaration has exactly `type`
+(a string), `valid` (a boolean) and optionally `unit`; `returns` is a string or an object with
+exactly `type` (a string) and optionally `unit`; a unit is a string, `{"arg": <string>}` or
+`{"of", "per"}` whose sides are strings or `{"arg": <string>}`. Step 3, `returns` as an object:
+`type` must be a known type (`E_CANON_TYPE`), then `number` (`E_CANON_UNIT`), then `unit` must be
+present (`E_CANON_UNIT`) and valid (`E_CANON_UNIT`). `returns: "number"` is `E_CANON_UNIT`, an
+unknown bare name `E_CANON_TYPE`.
+
+**Proposed wording (7).** "The JSON shapes (declarations, `returns`, units) are checked in step 2
+for the whole descriptor (`E_SCHEMA`). In step 3, a declaration is checked `type`
+(`E_CANON_TYPE`), then `unit`, then `valid`; a `returns` object is checked `type` (a known type,
+`E_CANON_TYPE`; then `number`, `E_CANON_UNIT`), then `unit` (present and valid, `E_CANON_UNIT`)."
+
+## DEF-25. 7.1 / units.md 1: argument references and rate sides that are not well formed
+
+**Problem.** (a) `{"arg": "Bad"}` and `{"arg": "asof"}`: the schema's `unitArg` requires an
+argument name, suggesting `E_CANON_ARG_NAME` (or `E_SCHEMA`), while 7.1 says only that the
+argument must exist and be a string (`E_CANON_UNIT`). (b) A rate side that is neither a string nor
+an argument reference (`{"of": {"of": "USD", "per": "EUR"}, ...}`, `{"of": 1, ...}`): units.md says
+"rates of rates cannot be written" and "Each is a currency code ... or an argument reference",
+which reads as `E_CANON_UNIT`, but also "a rate is an object with exactly `of` and `per`. Any other
+JSON shape is `E_SCHEMA`", which says nothing about the sides.
+
+**Resolution.** As the reference: (a) `E_CANON_UNIT`, since the value names no string argument;
+`{"arg": 5}` is `E_SCHEMA`. (b) `E_SCHEMA` for a side that is not a string or an
+`{"arg": <string>}` object; a string side that is not a currency code (`"kg"`, `"1"`,
+`"index:2015=100"`) is `E_CANON_UNIT`.
+
+**Proposed wording (units.md 1).** "... a rate is an object with exactly `of` and `per`, each a
+string or an argument reference. Any other JSON shape, including a rate inside a rate, is
+`E_SCHEMA`. A reference whose `arg` is not the name of a `string` argument of the signature
+(including a string that is not a valid name) is `E_CANON_UNIT`."
+
+## DEF-26. units.md 2.4 / 7.1: index units
+
+**Problem.** (a) "at most 64 characters" gives no code (`E_CANON_LIMIT` would follow 4.5).
+(b) "a real calendar year, month or day, in the forms of SPEC.md 3.2": 3.2's year range
+`0001`-`9999` presumably applies, so `index:0000=1` is not a unit, but this is indirect.
+(c) SPEC 7.1 calls a literal "a string listed in `units.md`, such as ... `"index:2015=100"`", but
+index units are a pattern, not listed; whether an argument reference may resolve to an index unit
+(units.md 3: "a literal unit from section 2") follows only if indices count as literals.
+
+**Resolution.** As the reference: (a) `E_CANON_UNIT` (a 65-character index unit is not a unit);
+(b) year `0000` is rejected, as are month `00`/`13`, `2023-02-29` and one-digit months; (c) index
+units are literals, also as the value of a referenced argument (`index:2015=100` resolves to
+itself; `index:2015=0` is `E_CANON_UNIT`).
+
+**Proposed wording (units.md 2.4).** "A string of the form `index-unit` is a literal unit; one
+longer than 64 characters, or whose period is not a real year, month or day in 0001-9999, or whose
+value is not a canonical number greater than zero, is not a unit (`E_CANON_UNIT`)." In SPEC 7.1:
+"a literal: a string listed in `units.md` or an index unit (units.md 2.4)".
+
+## DEF-27. 10.1 step 7: does verification resolve units?
+
+**Problem.** Step 7.1 says the descriptor must "be canonical (sections 6-7, units included)", and 7.1
+says "A substituted value must itself be a listed unit ... (`E_CANON_UNIT`)". It is not said whether
+step 7 (or any verification step) resolves the receipt's unit. A receipt of `fx_rate` with
+`quote = "usd"` has no resolvable unit.
+
+**Resolution.** As the reference: verification never resolves the unit. That receipt is
+signature-valid and passes step 7 (`level: recomputed`); `resolved_unit` reports `E_CANON_UNIT`
+for the same cell. A client that displays the unit will hit that error.
+
+**Proposed wording (10.1, after step 7).** "Verification does not resolve the receipt's unit; a
+receipt whose unit cannot be resolved (units.md 3) can still be signature-valid and fully verified.
+A client that needs the unit resolves it separately." (Or add a step 7.4b that resolves it, if a
+receipt with no unit should not verify.)
+
+## DEF-28. 10.1 step 7.7: ordering with steps 7.1-7.6, and the verification level
+
+**Problem.** 7.7 "MAY run directly after step 6, without 7.1-7.6". When a verifier recomputes and
+also has the content, the order is not stated: content that does not match and a value that does
+not match could report either code. Nor is it said what a receipt that passed 7.7 alone is:
+"fully verified" is defined as passing step 7, and the vector `receipt/blob-value` (with
+`blob_hex`, without `recompute`) expects level `signed`. Content supplied for a receipt whose type
+is not `blob` is not covered either.
+
+**Resolution.** As the reference: with `recompute`, 7.1-7.6 run first (`E_FN_UNAVAILABLE` and
+`E_VALUE_MISMATCH` win over `E_BLOB_MISMATCH`), then 7.7. Without `recompute`, 7.7 runs after step
+6 and the level stays `signed`; with both, `recomputed`. Content for a non-blob receipt is ignored
+(the reference does the same). The length is compared before the hash (both are
+`E_BLOB_MISMATCH`).
+
+**Proposed wording (10.1 step 7.7).** "... It runs last: after 7.6 when the verifier recomputes,
+otherwise directly after step 6. Passing it does not change the level: a receipt that passed steps
+1-6 and 7.7 is signature-valid, and one that passed all of step 7 is fully verified. Content offered
+for a value that is not a blob is not examined."
+
+## DEF-29. 5.5: "JSON numbers with integral values"
+
+**Problem.** `age_seconds` and `retry_after_seconds` are "a non-negative integer" and "JSON numbers
+with integral values, at most 2^53 - 1". Not said: whether `30.0`, `3e1` or `1.0e0` are integral
+(they are, as values), whether `-0` is non-negative, and whether the test is on the decimal text or
+on the IEEE 754 double the parser produces (6.1 refers to doubles): `0.99999999999999999999` is
+not an integer as a decimal but parses to the double 1.
+
+**Resolution.** As the reference: the test is on the double. `30.0`, `3e1`, `-0`, `-0.0` and
+`0.99999999999999999999` are accepted (as 30, 30, 0, 0 and 1); `1.5`, `-1`, `9007199254740992`,
+`true` and `"30"` are `E_ENVELOPE`; `1e400` is `E_PARSE_JSON` (6.1).
+
+**Proposed wording (5.5).** "... are JSON numbers. Read as IEEE 754 doubles (6.1), their value
+must be an integer from 0 to 2^53 - 1, so `30`, `30.0` and `3e1` are the same and `-0` is 0."
+(Or require the plain integer spelling `0 / [1-9][0-9]*` on the text, which is stricter and fits
+"one spelling" better; envelopes are not hashed, so either is safe.)
+
+## DEF-30. 5.5: which envelope failures are `E_ENVELOPE` and which keep receipt codes
+
+**Problem.** Step 2 checks "the members against the table and the rules above", with `receipt`
+defined as "a receipt object (section 8)"; step 4 verifies the receipt "with that procedure's
+codes". Whether a `receipt` member that is not a JSON object, or an object that is not a valid
+receipt (missing member), fails in step 2 (`E_ENVELOPE`) or in step 4 (`E_SCHEMA`) is open.
+Similarly, `reason` "follows the string rules (3.5) with the `summary` limit": the codes of 3.5
+(`E_CANON_STRING`, `E_CANON_LIMIT`) or `E_ENVELOPE`?
+
+**Resolution.** As the reference: in step 2 `receipt` must be a JSON object (`"x"`, `[]`:
+`E_ENVELOPE`); everything else about it is step 4 with the receipt codes (a missing member is
+`E_SCHEMA`, a bad value `E_CANON_NUMBER`, a slice `E_SLICE`, a tampered one `E_SIGNATURE`, an
+unknown host `E_KEY_UNAVAILABLE`). Every failure of `reason`, `quote`, `superseded_by`, `trust`,
+`error` and the seconds members is `E_ENVELOPE`, including string-rule failures of `reason`
+(empty, NFD, control characters, unassigned code points, over 1024 bytes). Members are examined in
+JCS order; all of them only produce `E_ENVELOPE`, so only the reported path depends on it.
+
+**Proposed wording (5.5 step 2).** "Check the members against the table and the rules above; every
+failure, including the string rules for `reason`, is `E_ENVELOPE`. Here `receipt` need only be a
+JSON object; it is checked as a receipt in step 4."
+
+## DEF-31. 5.5: `quote` and `error` details
+
+**Problem.** (a) `amount` is "a number in the form of 3.1 greater than zero": whether the 128
+character limit of 3.1 applies. (b) `authorise` is "an `https://` URL in the form of a licence URL
+(8.1)", and 8.1 never defines that form (DEF-10); only the schema does (`^https://[!-~]+$`, at most
+512). (c) `currency` "a currency code from `units.md`" admits the withdrawn codes kept for
+historical rates (`GRD`), which a mesh cannot be paid in. (d) `error` is "a code from 10.2": that
+includes `E_ENVELOPE` itself and the URI codes. But `error` is only valid with a 5xx status
+(vector `envelope-error-client-status`), and no outcome has a 4xx status other than 402, 403, 404
+and 429, so a mesh has no way to report a malformed request (`E_PARSE_URI`, `E_ARG_MISSING`): with
+400 it is `E_ENVELOPE`, with 500 it claims a server failure.
+
+**Resolution.** As the reference: (a) 129 characters is `E_ENVELOPE`; (b) the schema's pattern
+and limit (`http://`, `HTTPS://`, a bare `https://`, a space, or 513 characters are `E_ENVELOPE`);
+(c) `GRD` is accepted; (d) any of the 41 codes of 10.2 is accepted, `OK` and unknown codes are not.
+
+**Proposed wording (5.5).** "`amount`: a number (3.1, at most 128 characters) greater than zero.
+`authorise`: `https://` followed by one or more of `%x21-7E`, at most 512 characters.
+`currency`: a currency code of units.md 2.1." For (d), either add an outcome for client errors
+(e.g. `bad_request`, status 400, member `error`), or state that malformed requests are answered
+without an envelope.
+
+## DEF-32. 5.5: nothing ties the receipt to the request
+
+**Problem.** The client check of 5.5 verifies the embedded receipt and its `trust` label, but never
+checks that the receipt answers the cell that was requested (its `cell` against the URI's
+reference, with `fn_hash` against the function the client resolved) or the requested `asof`
+(`ok`: "The receipt answers the cell as of the requested `asof`"). A mesh, or anyone who can make
+one return a body, can answer `GET .../fx_rate?quote=USD...` with a valid, primary-labelled receipt
+for `quote=GBP`, or for another `asof`, and the envelope passes. Section 12 says envelopes are the
+mesh's claims, but this is a check the client *can* make.
+
+**Resolution.** Not implemented, because `check_envelope(status, body, keys)` (the contract's API)
+has no request to compare with; the library's documentation says the envelope only states that this
+mesh made a well-formed statement about a receipt its signer signed (5.5's last sentence). A caller
+must compare `receipt.cell` with `parse_uri(...)` of its request.
+
+**Proposed wording (5.5, new step 5).** "5. If there is a receipt, its `cell.ns`, `cell.fn` and
+`cell.args` equal the requested reference's (5.4), and for `ok` its `asof` equals the requested
+`asof` when one was given (`E_ENVELOPE`)." Consider also stating what `stale` allows (an older
+`asof`).
+
+## DEF-33. 11: details of the `unit` and `envelope` vector formats
+
+- `unit` vectors: `input` is the JSON text of `{"cell", "descriptor"}`. Inferred, as the reference
+  does: any other member, a missing member, or a member that is not an object is `E_SCHEMA` (a
+  member that is a JSON string is a value, not JSON text to be parsed again).
+- `envelope` vectors: the outputs `trust` and `receipt_hash` appear exactly when the body has a
+  receipt; for `not_covered` and the other outcomes without a receipt only `outcome` is given.
+  `status` is always an integer in the vectors; the spec does not say what a non-integer status
+  is (this library: `E_ENVELOPE`, as a status that matches no outcome).
+- `receipt` vectors: `blob_hex` is the content for step 7.7. With it, the expected `level` is still
+  `signed` (DEF-28).
+- The vectors and the schemas agree: `defs.schema.json`'s `currency` and `unitLiteral` lists equal
+  the `units-…` blocks of units.md (checked by `tests/test_units.py`), and `envelope.schema.json`
+  matches the table in 5.5. The schema's `integer` type for the seconds members also accepts `30.0`
+  (JSON Schema 2020-12 counts integral numbers as integers), consistent with DEF-29.
+
+## DEF-34. README of the spec: the `spec-0.2.0` tag does not exist yet
+
+Not a SPEC.md defect, but it affects this library's README: the README tells users to
+`git clone --branch spec-0.2.0`, which fails until the commit is tagged. The packaging test runs the
+README example against the `spec/` submodule at `0c7accc` and accepts either that commit or the tag.
+The package metadata links to `blob/spec-0.2.0/SPEC.md`, which also resolves only once tagged.

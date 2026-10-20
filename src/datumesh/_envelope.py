@@ -150,6 +150,9 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
     the namespace's host and there are no inputs) and ``superseded_by`` must not
     be the receipt's own hash (``E_ENVELOPE``).
 
+    It does not check that the receipt answers the cell or ``asof`` you requested
+    (SPEC 5.5 does not ask for it): compare ``receipt.cell`` with your request.
+
     Never raises for an invalid envelope; raises TypeError only for a body that
     is not text or bytes, or keys of an unsupported type. Uses no network.
     """
