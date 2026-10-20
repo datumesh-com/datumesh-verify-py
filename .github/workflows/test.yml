@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest and newest supported runtimes. 3.10 has Unicode 13 in unicodedata,
+        # 3.13 has Unicode 15.1: results must not differ.
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the package
+        run: python -m pip install .
+      - name: Run the test suite against the installed package
+        run: python -m unittest discover -s tests -v
+
+  package:
+    name: packaging test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Fetch the spec tags
+        run: git -C spec fetch --tags --quiet
+      - name: Build, install the wheel in a fresh python:3.10-slim container, run the README example
+        run: scripts/package-test.sh

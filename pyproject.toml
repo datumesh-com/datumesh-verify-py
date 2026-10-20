@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datumesh"
+version = "0.1.1"
+description = "Verify Datumesh receipts (spec-0.1.1): RFC 8785 canonical JSON, Ed25519 signatures, cell URIs, key documents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Datumesh" }]
+keywords = ["datumesh", "spec-0.1.1", "receipt", "verification", "ed25519", "rfc8785", "jcs", "canonical-json"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+    "Typing :: Typed",
+]
+dependencies = ["pynacl>=1.5.0"]
+
+[project.urls]
+Homepage = "https://datumesh.com"
+Repository = "https://github.com/datumesh-com/datumesh-verify-py"
+"Specification (spec-0.1.1)" = "https://github.com/datumesh-com/datumesh-spec/blob/spec-0.1.1/SPEC.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+datumesh = ["py.typed"]
