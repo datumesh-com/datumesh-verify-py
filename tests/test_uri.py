@@ -60,10 +60,11 @@ class UriTest(unittest.TestCase):
         with self.assertRaises(DatumeshError) as cm:
             parse_uri("cell://math.example/f?n=1", {"args": {"n": {"type": "decimal", "valid": False}}})
         self.assertEqual(cm.exception.code, "E_CANON_TYPE")
-        # Only a signature whose argument types cannot be read at all is a caller error.
+        # A signature whose argument types cannot be read is E_SCHEMA (SPEC 5.4 step 5, spec-0.2.1).
         for bad in (None, {}, {"args": []}, {"args": {"n": {}}}, {"args": {"n": {"type": 5}}}):
-            with self.subTest(bad=bad), self.assertRaises(TypeError):
+            with self.subTest(bad=bad), self.assertRaises(DatumeshError) as cm:
                 parse_uri("cell://math.example/f?n=1", bad)  # type: ignore[arg-type]
+            self.assertEqual(cm.exception.code, "E_SCHEMA")
         with self.assertRaises(TypeError):
             parse_uri(b"cell://math.example/pi", {"args": {}, "returns": "boolean"})  # type: ignore[arg-type]
 

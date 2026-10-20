@@ -18,8 +18,8 @@ LINEAGE = next(v for v in vectors_of("receipt", True) if v["id"] == "receipt/com
 
 class ApiTest(unittest.TestCase):
     def test_constants(self) -> None:
-        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.2.0")
-        self.assertEqual(datumesh.__version__, "0.2.0")
+        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.2.1")
+        self.assertEqual(datumesh.__version__, "0.2.1")
         self.assertEqual(len(datumesh.ERROR_CODES), 41)
         self.assertEqual(len(set(datumesh.ERROR_CODES)), 41)
         for code in ("E_CANON_UNIT", "E_CANON_BLOB", "E_BLOB_MISMATCH", "E_ENVELOPE"):
