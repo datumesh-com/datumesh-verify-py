@@ -14,10 +14,11 @@ contradicted a vector, and I had to infer the rule from a vector or a schema, as
 choose. Each entry gives the section, the problem, what this library does, and replacement
 wording. "Reference" means canon.py's observed behaviour. `tools/oracle_fuzz.py` runs the
 differential check that found most of these (45,000 mutated vectors over nine runs, three of them
-with this library on Python 3.10; every remaining disagreement is DEF-01).
+with this library on Python 3.10; every remaining disagreement was DEF-01, before the DEF-02
+change for userinfo and ports, which adds a second known class).
 
-Deliberate divergences from the reference tool: DEF-01, DEF-04, DEF-17 (null or text descriptor),
-DEF-16 (invalid host). All four are on inputs no vector covers.
+Deliberate divergences from the reference tool: DEF-01, DEF-02 (userinfo and ports), DEF-04,
+DEF-17 (null or text descriptor), DEF-16 (invalid host). All five are on inputs no vector covers.
 
 ---
 
@@ -29,7 +30,7 @@ grammar. The reference checks the scheme and the fragment first, then the namesp
 names, and only then the empty query and parameters without `=`:
 `cell://X.example/f?c` is `E_CANON_NAME` in the reference, `E_PARSE_URI` by the prose.
 
-**Resolution.** Follows the prose (`E_PARSE_URI`). This is the only class of disagreement left
+**Resolution.** Follows the prose (`E_PARSE_URI`). Apart from DEF-02 (userinfo and ports), this is the only class of disagreement left
 in differential fuzzing.
 
 **Proposed wording (5.4, step 1).** "1. the outer grammar: the URI starts with `cell://`, contains
@@ -37,29 +38,42 @@ no `#`, and, if it contains `?`, the text after the first `?` is non-empty and e
 `&`-separated parameters contains `=` (`E_PARSE_URI`);" (or, if the reference's order is the
 intended one, move the empty-query and missing-`=` checks to after step 2 and say so).
 
-## DEF-02. 5.1 / 5.4: where the "outer grammar" ends
+## DEF-02. 5.1 / 5.4: where the "outer grammar" ends; userinfo and ports
 
-**Problem.** 5.1 gives one ABNF for the whole URI, then says "Failures of this outer grammar are
-`E_PARSE_URI`. Invalid names inside it are `E_CANON_NAME`", and also that a cell URI has "no
-userinfo, no port". It does not say which parts of the ABNF are "outer". The vectors show that
-characters a value may not contain (`+`, raw `ü`, space) are `E_CANON_PERCENT`, not `E_PARSE_URI`,
-although the ABNF excludes them. The reference treats everything between `cell://` and `?` as a
-namespace/function path, so userinfo and ports (`cell://user@math.example/pi`,
-`cell://math.example:443/pi`), a missing function (`cell://math.example`), an empty path and a
-trailing `/` are all `E_CANON_NAME`.
+**Problem.** 5.1 gives one ABNF for the whole URI, then says "A cell URI has no fragment, no
+userinfo, no port and no empty query. Failures of this outer grammar are `E_PARSE_URI`. Invalid
+names inside it are `E_CANON_NAME`". It does not say which parts of the ABNF are "outer". The
+vectors show that characters a value may not contain (`+`, raw `ü`, space) are `E_CANON_PERCENT`,
+not `E_PARSE_URI`, although the ABNF excludes them. The reference treats everything between
+`cell://` and `?` as a namespace/function path, so userinfo and ports
+(`cell://user@rates.example.org/fx_rate`, `cell://rates.example.org:443/fx_rate`) are
+`E_CANON_NAME` there, contrary to the explicit sentence in 5.1. A missing function
+(`cell://math.example`), an empty path and a trailing `/` are `E_CANON_NAME` in the reference too.
 
-**Resolution.** As the reference: the outer grammar is only scheme, fragment, `?`, `&` and `=`
-(DEF-01); the path is split at its last `/` (no `/` at all: `E_CANON_NAME`), and every other
+**Resolution (divergence for userinfo and ports; prose wins).** Where the prose is explicit it is
+followed over the reference, as in DEF-01: in the outer-grammar step, before names are checked, an
+`@` (userinfo) or a `:` (port, including an empty `host:` or a non-numeric one) anywhere in the
+authority, i.e. between `cell://` and the first `/` (or the `?` or the end if there is no `/`), is
+`E_PARSE_URI`. This matches the independently written JS library; a cross-language check over
+1,000 mutated URIs had found 237 such cases where this library, then following the reference, said
+`E_CANON_NAME`. `:` and `@` after the authority are not userinfo or ports (a `:` in a function name
+is `E_CANON_NAME`; in a value `:` is a literal and `@` is `E_CANON_PERCENT`). Everything else is as
+the reference: the path is split at its last `/` (no `/` at all: `E_CANON_NAME`), and every other
 character problem is a name (`E_CANON_NAME`) or value (`E_CANON_PERCENT`) error. A value is
 everything after the first `=` of a parameter, so `a=b=c` is `E_CANON_PERCENT`.
 
-**Proposed wording (5.1).** "The outer grammar is `"cell://" path [ "?" query ]` where `path`
-is any characters other than `?` and `#`, `query` is one or more `&`-separated parameters, and each
-parameter is a name, `=`, and a value (the value runs to the next `&` and may contain further
-`=`). Failures of the outer grammar are `E_PARSE_URI`. The path is split at its last `/` into a
-namespace and a function name, which are checked as names (`E_CANON_NAME`; userinfo, ports and
-empty segments fail here). Values are checked as in 5.2 (`E_CANON_PERCENT` for any character that
-is neither a `literal` nor part of a `pct-encoded` triple)."
+**Action for the spec.** canon.py reports `E_CANON_NAME` for userinfo and ports and should be fixed
+to report `E_PARSE_URI`; the next spec revision should add vectors for userinfo, a port, an empty
+port (`cell://host:/fn`) and a non-numeric port.
+
+**Proposed wording (5.1).** "The outer grammar is `"cell://" authority-and-path [ "?" query ]`.
+The authority is the text between `cell://` and the first `/` (or `?`, or the end); it contains no
+`@` (userinfo) and no `:` (port). The path is any characters other than `?` and `#`; `query` is one
+or more `&`-separated parameters, and each parameter is a name, `=`, and a value (the value runs to
+the next `&` and may contain further `=`). Failures of the outer grammar are `E_PARSE_URI`. The path
+is split at its last `/` into a namespace and a function name, which are checked as names
+(`E_CANON_NAME`; empty segments fail here). Values are checked as in 5.2 (`E_CANON_PERCENT` for any
+character that is neither a `literal` nor part of a `pct-encoded` triple)."
 
 ## DEF-03. 5.2 / 5.4 step 3: duplicates versus order, and `asof`
 

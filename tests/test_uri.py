@@ -62,8 +62,22 @@ class UriTest(unittest.TestCase):
     # (except where marked as a deliberate divergence in DEFECTS.md).
     CASES = [
         ("cell://math.example", {}, "E_CANON_NAME"),
-        ("cell://user@math.example/pi", {}, "E_CANON_NAME"),
-        ("cell://math.example:443/pi", {}, "E_CANON_NAME"),
+        ("cell://user@math.example/pi", {}, "E_PARSE_URI"),
+        ("cell://math.example:443/pi", {}, "E_PARSE_URI"),
+        # Userinfo and ports are outer-grammar failures (SPEC 5.1; DEFECTS.md DEF-02). The reference
+        # tool reports E_CANON_NAME for these.
+        ("cell://user@rates.example.org/fx_rate?base=EUR", {"base": "string"}, "E_PARSE_URI"),
+        ("cell://rates.example.org:443/fx_rate?base=EUR", {"base": "string"}, "E_PARSE_URI"),
+        ("cell://rates.example.org:/fx_rate", {}, "E_PARSE_URI"),
+        ("cell://rates.example.org:https/fx_rate", {}, "E_PARSE_URI"),
+        ("cell://user:pw@rates.example.org:443/fx_rate", {}, "E_PARSE_URI"),
+        ("cell://rates.example.org:443", {}, "E_PARSE_URI"),
+        ("cell://a@b.example?x=1", {"x": "number"}, "E_PARSE_URI"),
+        ("cell://User@X.example/F?c", {}, "E_PARSE_URI"),
+        # ':' and '@' after the authority are not userinfo or ports: names and values decide.
+        ("cell://x.example/f:g", {}, "E_CANON_NAME"),
+        ("cell://x.example/f?a=b@c", {"a": "string"}, "E_CANON_PERCENT"),
+        ("cell://x.example/f?a=2024-01-01T00:00:00.000000Z", {"a": "instant"}, None),
         ("cell://math.example/pi/", {}, "E_CANON_NAME"),
         ("cell:/math.example/pi", {}, "E_PARSE_URI"),
         ("CELL://math.example/pi", {}, "E_PARSE_URI"),

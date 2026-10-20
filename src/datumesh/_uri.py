@@ -64,6 +64,11 @@ def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
     if not uri.startswith(SCHEME) or "#" in uri:
         fail("E_PARSE_URI", "not cell://<namespace>/<function>[?<query>] without a fragment", "uri")
     path, qmark, query = uri[len(SCHEME):].partition("?")
+    authority = path.split("/", 1)[0]
+    if "@" in authority:
+        fail("E_PARSE_URI", "a cell URI has no userinfo", "uri")
+    if ":" in authority:
+        fail("E_PARSE_URI", "a cell URI has no port", "uri")
     params: List[Tuple[str, str]] = []
     if qmark:
         if query == "":
