@@ -13,7 +13,7 @@ none needed canon.py. The entries below are places where the prose was silent, a
 contradicted a vector, and I had to infer the rule from a vector or a schema, ask the oracle, or
 choose. Each entry gives the section, the problem, what this library does, and replacement
 wording. "Reference" means canon.py's observed behaviour. `tools/oracle_fuzz.py` runs the
-differential check that found most of these (37,000 mutated vectors over eight runs, three of them
+differential check that found most of these (45,000 mutated vectors over nine runs, three of them
 with this library on Python 3.10; every remaining disagreement is DEF-01).
 
 Deliberate divergences from the reference tool: DEF-01, DEF-04, DEF-17 (null or text descriptor),
