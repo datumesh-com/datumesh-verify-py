@@ -283,7 +283,7 @@ class FetchKeysTest(unittest.TestCase):
             self.assertEqual(datumesh.fetch_keys(HOST).code, "E_KEY_UNAVAILABLE")
 
     def test_response_for_a_host_that_is_not_a_dns_name(self) -> None:
-        # SPEC 9.3 (spec-0.2.1, 58eb0d9): a response offered for a host that is not a DNS name
+        # SPEC 9.3 (spec-0.2.1): a response offered for a host that is not a DNS name
         # cannot satisfy 9.2, so a 200 is E_KEY_DOC whatever its body; any other status is still
         # E_KEY_UNAVAILABLE. Confirmed against the reference tool.
         for host in ("Rates.example.org", "localhost", "10.0.0.1", "rates.example.org:443", "Bad Host"):

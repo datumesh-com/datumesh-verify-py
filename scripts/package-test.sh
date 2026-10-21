@@ -5,17 +5,16 @@
 #   3. run the README's Python example verbatim (extracted from README.md) in a checkout of the
 #      spec at tag spec-0.2.1 (the spec/ submodule stands in for the README's `git clone`, and the
 #      built wheel for `pip install datumesh`), and compare its output with the README's comment.
-#      Until the tag exists, the submodule must be at its commit, 58eb0d9.
+#      The submodule must be at the tag's commit, 710dabb (checked by commit: CI checkouts do not
+#      fetch the submodule's tags).
 set -eu
 cd "$(dirname "$0")/.."
 [ -f spec/vectors/receipt/stored-number.json ] || { echo "spec submodule missing: git submodule update --init" >&2; exit 1; }
-SPEC_COMMIT=58eb0d9
-if [ "$(git -C spec describe --tags --exact-match 2>/dev/null)" != "spec-0.2.1" ]; then
-  case "$(git -C spec rev-parse HEAD)" in
-    "$SPEC_COMMIT"*) echo "note: spec/ is at $SPEC_COMMIT, which is to be tagged spec-0.2.1" ;;
-    *) echo "spec/ is neither at tag spec-0.2.1 nor at $SPEC_COMMIT" >&2; exit 1 ;;
-  esac
-fi
+SPEC_COMMIT=710dabb
+case "$(git -C spec rev-parse HEAD)" in
+  "$SPEC_COMMIT"*) ;;
+  *) echo "spec/ is not at spec-0.2.1 ($SPEC_COMMIT)" >&2; exit 1 ;;
+esac
 
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
