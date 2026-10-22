@@ -245,7 +245,7 @@ class EnvelopeRulesTest(unittest.TestCase):
 
 
 class RequestBindingTest(unittest.TestCase):
-    """SPEC 5.5 step 5: the receipt answers the request (same cell id; same asof when one was asked for)."""
+    """SPEC 5.5 step 5: the receipt answers the request (same cell id; an asof at or before the one asked for)."""
 
     def code(self, body: dict, request: dict, status: int = 200) -> str:
         return check_envelope(status, json.dumps(body), KEYS, request).code
@@ -254,7 +254,8 @@ class RequestBindingTest(unittest.TestCase):
         self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": R["asof"]}), "OK")
         self.assertEqual(self.code(ok(), {"cell_id": CELL_ID}), "OK")  # no asof asked: the mesh's now
         self.assertEqual(self.code(ok(), {"cell_id": "0" * 64}), "E_ENVELOPE")
-        self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}), "E_ENVELOPE")
+        # ok (SPEC 5.5 step 5, spec-0.3.0): like stale, the receipt's asof is at or before the requested asof.
+        self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}), "OK")
         self.assertEqual(self.code(stale(), {"cell_id": "0" * 64}), "E_ENVELOPE")
         # stale (SPEC 5.5 step 5, spec 240a830): the receipt's asof is at or before the requested asof.
         self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"}), "OK")
@@ -262,11 +263,11 @@ class RequestBindingTest(unittest.TestCase):
         self.assertEqual(self.code(stale(), {"cell_id": CELL_ID}), "OK")
         self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2024-03-16T08:59:59.999999Z"}), "E_ENVELOPE")
         self.assertEqual(self.code(stale(), {"cell_id": CELL_ID, "asof": "2020-01-01T00:00:00.000000Z"}), "E_ENVELOPE")
-        # ok still needs the same asof
+        # ok: a receipt asof after the requested one fails
         self.assertEqual(self.code(ok(), {"cell_id": CELL_ID, "asof": "2024-03-16T08:59:59.999999Z"}), "E_ENVELOPE")
         res = check_envelope(200, json.dumps(ok()), KEYS, {"cell_id": "0" * 64})
         self.assertEqual(res.path, "$.receipt.cell")
-        res = check_envelope(200, json.dumps(ok()), KEYS, {"cell_id": CELL_ID, "asof": "2024-03-17T09:00:00.000000Z"})
+        res = check_envelope(200, json.dumps(ok()), KEYS, {"cell_id": CELL_ID, "asof": "2024-03-16T08:59:59.999999Z"})
         self.assertEqual(res.path, "$.receipt.asof")
 
     def test_order(self) -> None:

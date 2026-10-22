@@ -18,11 +18,11 @@ LINEAGE = next(v for v in vectors_of("receipt", True) if v["id"] == "receipt/com
 
 class ApiTest(unittest.TestCase):
     def test_constants(self) -> None:
-        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.2.1")
-        self.assertEqual(datumesh.__version__, "0.2.1")
-        self.assertEqual(len(datumesh.ERROR_CODES), 41)
-        self.assertEqual(len(set(datumesh.ERROR_CODES)), 41)
-        for code in ("E_CANON_UNIT", "E_CANON_BLOB", "E_BLOB_MISMATCH", "E_ENVELOPE"):
+        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.3.0")
+        self.assertEqual(datumesh.__version__, "0.3.0")
+        self.assertEqual(len(datumesh.ERROR_CODES), 42)
+        self.assertEqual(len(set(datumesh.ERROR_CODES)), 42)
+        for code in ("E_CANON_UNIT", "E_CANON_BLOB", "E_BLOB_MISMATCH", "E_ENVELOPE", "E_EVAL_UNAVAILABLE"):
             self.assertIn(code, datumesh.ERROR_CODES)
         for name in ("resolved_unit", "check_envelope", "EnvelopeResult", "UNITS"):
             self.assertIn(name, datumesh.__all__)
@@ -88,9 +88,12 @@ class ApiTest(unittest.TestCase):
         # descriptor as JSON text
         rc2 = dict(rc, descriptor=json.dumps(rc["descriptor"]))
         self.assertEqual(verify(LINEAGE["input"], keys, rc2).level, "recomputed")
-        # descriptor None or absent
-        self.assertEqual(verify(LINEAGE["input"], keys, dict(rc, descriptor=None)).code, "E_FN_UNAVAILABLE")
+        # descriptor absent (E_FN_UNAVAILABLE), or None: a JSON null offered (E_FN_HASH_MISMATCH, spec-0.3.0)
+        self.assertEqual(verify(LINEAGE["input"], keys, dict(rc, descriptor=None)).code, "E_FN_HASH_MISMATCH")
         self.assertEqual(verify(LINEAGE["input"], keys, {"value": rc["value"]}).code, "E_FN_UNAVAILABLE")
+        # value absent: evaluation unavailable (spec-0.3.0), success at level signed
+        res = verify(LINEAGE["input"], keys, {"descriptor": rc["descriptor"], "inputs": rc["inputs"]})
+        self.assertEqual((res.ok, res.code, res.level), (True, "E_EVAL_UNAVAILABLE", "signed"))
         # inputs missing, given as parsed objects, or tampered
         self.assertEqual(verify(LINEAGE["input"], keys, dict(rc, inputs={})).code, "E_INPUT_UNAVAILABLE")
         parsed = {h: json.loads(t) for h, t in rc["inputs"].items()}
@@ -98,7 +101,7 @@ class ApiTest(unittest.TestCase):
         # boolean vs string values are different
         self.assertEqual(verify(LINEAGE["input"], keys, dict(rc, value={"type": "number", "value": "108.920"})).code,
                          "E_VALUE_MISMATCH")
-        for bad in ([], {"descriptor": rc["descriptor"]}, {"value": "108.92"}, dict(rc, inputs=[])):
+        for bad in ([], dict(rc, value=None), {"value": "108.92"}, dict(rc, inputs=[])):
             with self.subTest(bad=str(bad)[:40]), self.assertRaises(TypeError):
                 verify(LINEAGE["input"], keys, bad)  # type: ignore[arg-type]
 

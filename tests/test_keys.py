@@ -178,7 +178,7 @@ class VerifyKeyHandlingTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             verify(5, DOC)  # type: ignore[arg-type]
         with self.assertRaises(TypeError):
-            verify(VECTOR["input"], DOC, {"descriptor": None})
+            verify(VECTOR["input"], DOC, {"descriptor": None, "value": None})
 
 
 # ---------------------------------------------------------------- fetch_keys
