@@ -78,7 +78,28 @@ def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
             # SPEC 11: "blob_checked (true) when blob_hex is given". The vector files carry it since
             # spec commit 1400247 (DEFECTS.md DEF-35); the rule is the fallback.
             exp["blob_checked"] = v.get("blob_checked", True)
+        if v["kind"] == "receipt" and "code" in v:
+            # SPEC 11 (spec-0.3.0): a code reported with success, only E_EVAL_UNAVAILABLE.
+            exp["code"] = v["code"]
     return exp
+
+
+def recompute_of(v: Dict[str, Any]) -> Any:
+    """A receipt vector's ``recompute`` as ``verify`` takes it, or None.
+
+    In a vector, ``descriptor`` is always a JSON value (SPEC 11, spec-0.3.0): a JSON string is a
+    string value, never text to parse. ``verify`` parses a str as JSON text, so a string value is
+    passed as its JSON text. Every other value (``null`` included) is passed as it is; an absent
+    member stays absent (the descriptor is unavailable), and so does an absent ``value``
+    (evaluation is unavailable).
+    """
+    rc = v.get("recompute")
+    if rc is None:
+        return None
+    rc = dict(rc)
+    if isinstance(rc.get("descriptor"), str):
+        rc["descriptor"] = json.dumps(rc["descriptor"])
+    return rc
 
 
 def blob_of(v: Dict[str, Any]) -> Any:

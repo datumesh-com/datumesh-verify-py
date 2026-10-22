@@ -8,7 +8,7 @@ import subprocess
 import sys
 import unittest
 
-from util import ROOT, blob_of, env_keys, expected_output, load_vectors, runner, vectors_of
+from util import ROOT, blob_of, env_keys, expected_output, load_vectors, recompute_of, runner, vectors_of
 
 import datumesh
 
@@ -16,9 +16,9 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        self.assertEqual(sum(counts.values()), 339, counts)
+        self.assertEqual(sum(counts.values()), 365, counts)
         self.assertEqual(counts["unit"], 13, counts)
-        self.assertEqual(counts["envelope"], 50, counts)
+        self.assertEqual(counts["envelope"], 60, counts)
         # every vector's id is its path, and every kind is one the runner knows
         for v in load_vectors():
             self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",
@@ -67,20 +67,20 @@ class ConformanceTest(unittest.TestCase):
     def test_receipts_through_verify(self) -> None:
         for v in vectors_of("receipt"):
             with self.subTest(v["id"]):
-                res = datumesh.verify(v["input"], env_keys(v["keys"]), v.get("recompute"), blob_of(v))
+                rc = recompute_of(v)
+                res = datumesh.verify(v["input"], env_keys(v["keys"]), rc, blob_of(v))
                 if v["valid"]:
                     self.assertTrue(res.ok, res)
-                    self.assertEqual(res.code, "OK")
+                    # SPEC 10.1 step 7.6 (spec-0.3.0): E_EVAL_UNAVAILABLE is reported with success, at $.value
+                    self.assertEqual(res.code, v.get("code", "OK"))
                     self.assertEqual(res.level, v["level"])
                     self.assertEqual(res.hash, v["sha256"])
                     self.assertEqual(res.blob_checked, "blob_hex" in v)
                     self.assertEqual(res.key, json.loads(v["input"])["computed_by"])
-                    self.assertIsNone(res.path)
+                    self.assertEqual(res.path, "$.value" if "code" in v else None)
                     # bytes input and parsed input give the same result
-                    self.assertEqual(datumesh.verify(v["input"].encode(), env_keys(v["keys"]), v.get("recompute"),
-                                                     blob_of(v)), res)
-                    self.assertEqual(datumesh.verify(json.loads(v["input"]), env_keys(v["keys"]), v.get("recompute"),
-                                                     blob_of(v)), res)
+                    self.assertEqual(datumesh.verify(v["input"].encode(), env_keys(v["keys"]), rc, blob_of(v)), res)
+                    self.assertEqual(datumesh.verify(json.loads(v["input"]), env_keys(v["keys"]), rc, blob_of(v)), res)
                     self.assertEqual(datumesh.receipt_hash(v["input"]), v["sha256"])
                     self.assertEqual(datumesh.receipt_payload(v["input"]).decode(), v["canonical"])
                 else:

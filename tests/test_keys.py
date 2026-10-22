@@ -13,7 +13,7 @@ import unittest
 from typing import Any, Dict, List, Optional
 from unittest import mock
 
-from util import FIXTURES, env_keys, vectors_of
+from util import FIXTURES, env_keys, recompute_of, vectors_of
 
 import datumesh
 from datumesh import KeysResult, keys_from_response, verify
@@ -305,7 +305,7 @@ class FetchKeysTest(unittest.TestCase):
                 mock.patch.object(socket, "socket", side_effect=AssertionError("socket opened")), \
                 mock.patch.object(socket, "create_connection", side_effect=AssertionError("socket opened")):
             for v in vectors_of("receipt"):
-                datumesh.verify(v["input"], env_keys(v["keys"]), v.get("recompute"))
+                datumesh.verify(v["input"], env_keys(v["keys"]), recompute_of(v))
             datumesh.verify(VECTOR["input"], [])
 
 
