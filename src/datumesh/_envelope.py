@@ -183,8 +183,8 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
     of 5.5 (``E_ENVELOPE``); the status matches the outcome (``E_ENVELOPE``); an
     embedded receipt is verified through step 6 of 10.1 with ``keys`` (the forms
     :func:`verify` takes) and keeps that procedure's codes; the receipt answers
-    the request: same cell id, and when an ``asof`` was requested the same ``asof``
-    for ``ok`` or one at or before it for ``stale`` (``E_ENVELOPE``); then ``trust`` is checked against the receipt (``primary``
+    the request: same cell id, and when an ``asof`` was requested a receipt
+    ``asof`` at or before it, for ``ok`` and ``stale`` alike (``E_ENVELOPE``); then ``trust`` is checked against the receipt (``primary``
     exactly when the signer's host is the namespace's host and there are no
     inputs) and ``superseded_by`` must not be the receipt's own hash (``E_ENVELOPE``).
 
@@ -214,14 +214,11 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
                 raise DatumeshError(e.code, e.detail, path) from None
             if hashlib.sha256(jcs_bytes(r["cell"])).hexdigest() != want_cell:
                 _bad("the receipt's cell is not the cell requested", "$.receipt.cell")
-            # ok: the same asof; stale: at or before it (instants compare as strings, SPEC 3.3).
-            if want_asof is not None:
-                if outcome == "stale" and not r["asof"] <= want_asof:
-                    _bad(f"a stale receipt answers as of {r['asof']}, after the requested {want_asof}",
-                         "$.receipt.asof")
-                if outcome == "ok" and r["asof"] != want_asof:
-                    _bad(f"the receipt answers as of {r['asof']}, the request asked for {want_asof}",
-                         "$.receipt.asof")
+            # ok and stale alike: the receipt's asof at or before the requested one (D31, spec-0.3.0;
+            # canonical instants compare as strings, SPEC 3.3). No requested asof: any.
+            if want_asof is not None and r["asof"] > want_asof:
+                _bad(f"the {outcome} receipt answers as of {r['asof']}, after the requested {want_asof}",
+                     "$.receipt.asof")
             trust = env["trust"]
             if (trust == "primary") != _is_primary(r):
                 _bad("trust is primary exactly when the signer's host is the namespace's host and there are no "

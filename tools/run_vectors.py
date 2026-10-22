@@ -9,11 +9,14 @@ no output line contains U+2028 or other line separators):
 
 where the outputs (only when error is null) are exactly the section 11 output
 fields for the vector's kind: canonical, sha256, object, https (on mesh
-"mesh.example"), key_id, key_ids, sig, level, unit (may be null), outcome, and
-for an envelope with a receipt trust and receipt_hash. Key environments (``env``
+"mesh.example"), key_id, key_ids, sig, level, code (only for a valid receipt
+reported with E_EVAL_UNAVAILABLE), unit (may be null), outcome, and for an
+envelope with a receipt trust and receipt_hash. Key environments (``env``
 of a keys vector, each host of a receipt or envelope vector's ``keys``) are
 converted with ``keys_from_response``; a status of "error" means a failed
-retrieval. A receipt vector's ``blob_hex`` is passed to ``verify`` as the blob
+retrieval. A receipt vector's ``recompute`` is passed to ``verify``: its
+``descriptor`` is a JSON value (a string is a string, not text to parse), and
+an absent ``value`` means evaluation is unavailable. A receipt vector's ``blob_hex`` is passed to ``verify`` as the blob
 content (step 7.7), and the output then has ``blob_checked``; an envelope
 vector's ``request`` is passed to ``check_envelope``.
 
@@ -41,6 +44,15 @@ def _env_keys(host: str, env: Dict[str, Any]) -> datumesh.KeysResult:
     https = env.get("https") or {}
     status = https.get("status", "error")
     return datumesh.keys_from_response(host, None if status == "error" else status, https.get("body"))
+
+
+def _recompute(rc: Any) -> Any:
+    """A vector's ``recompute`` as ``verify`` takes it. ``descriptor`` is a JSON value (SPEC 11):
+    ``verify`` would parse a str as JSON text, so a string value is passed as its JSON text. Absent
+    members stay absent: no descriptor (E_FN_UNAVAILABLE), no value (E_EVAL_UNAVAILABLE)."""
+    if isinstance(rc, dict) and isinstance(rc.get("descriptor"), str):
+        rc = dict(rc, descriptor=json.dumps(rc["descriptor"]))
+    return rc
 
 
 def _input(v: Dict[str, Any]) -> Any:
@@ -76,7 +88,7 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
         elif kind == "receipt":
             keys: List[datumesh.KeysResult] = [_env_keys(h, e) for h, e in (v.get("keys") or {}).items()]
             blob = bytes.fromhex(v["blob_hex"]) if "blob_hex" in v else None
-            res = datumesh.verify(_input(v), keys, v.get("recompute"), blob)
+            res = datumesh.verify(_input(v), keys, _recompute(v.get("recompute")), blob)
             if not res.ok:
                 out["error"] = res.code
             else:
@@ -85,6 +97,8 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
                 out.update(canonical=payload.decode("utf-8"), sha256=res.hash, sig=parsed["sig"], level=res.level)
                 if blob is not None:
                     out["blob_checked"] = res.blob_checked
+                if res.code != "OK":  # a code reported with success: only E_EVAL_UNAVAILABLE (SPEC 11)
+                    out["code"] = res.code
         elif kind == "unit":
             # input: JSON text of {"cell", "descriptor"}, parsed strictly
             obj = datumesh.parse_json(_input(v))

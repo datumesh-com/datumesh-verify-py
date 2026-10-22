@@ -23,12 +23,16 @@ class VerifyResult:
     """The outcome of :func:`verify`.
 
     ``ok``: the receipt verified. ``code``: ``"OK"`` or the first failing
-    error code. ``level``: ``"signed"`` (steps 1-6) or ``"recomputed"`` (step 7
+    error code; on success it is ``"E_EVAL_UNAVAILABLE"`` instead of ``"OK"``
+    when recomputation was asked for without an evaluated ``value`` (SPEC 10.1
+    step 7.6: steps 7.1-7.5 passed, nothing was compared, the level stays
+    ``signed``). ``level``: ``"signed"`` (steps 1-6) or ``"recomputed"`` (step 7
     too) when ok, else None. ``hash``: the receipt hash once the receipt is in
     canonical form (steps 1-3 passed), else None. ``key``: the ``computed_by``
     value when ok. ``detail``: human-readable text. ``path``: where the
-    failure is (a JSON path) or None. ``blob_checked``: True only when blob
-    content was supplied and step 7.7 ran and passed (the level is unchanged).
+    failure is (a JSON path), ``"$.value"`` with ``E_EVAL_UNAVAILABLE``, or None.
+    ``blob_checked``: True only when blob content was supplied and step 7.7 ran
+    and passed (the level and the code are unchanged).
     """
 
     ok: bool
@@ -76,13 +80,14 @@ def _signed(receipt: Any, sources: Tuple[_Source, ...]) -> Tuple[Dict[str, Any],
     return r, h
 
 
-def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_Source, ...]) -> None:
-    """Step 7. Raises DatumeshError."""
-    # 7.1 descriptor
-    desc = recompute.get("descriptor")
-    if desc is None:
+def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_Source, ...]) -> bool:
+    """Step 7.1-7.6. Raises DatumeshError. Returns False when 7.1-7.5 passed and there is no
+    evaluated value to compare (E_EVAL_UNAVAILABLE), True when 7.6 passed."""
+    # 7.1 descriptor: only an absent member is "none obtained". Whatever is obtained is a JSON
+    # value (None is JSON null); text or bytes are parsed strictly first.
+    if "descriptor" not in recompute:
         fail("E_FN_UNAVAILABLE", "no descriptor supplied for cell.fn_hash", "$.cell.fn_hash")
-    desc = load(desc, "descriptor")
+    desc = load(recompute["descriptor"], "descriptor")
     if hashlib.sha256(jcs_bytes(desc)).hexdigest() != r["cell"]["fn_hash"]:
         fail("E_FN_HASH_MISMATCH", "the descriptor does not hash to cell.fn_hash", "$.cell.fn_hash")
     _model.validate_function(desc, "descriptor")
@@ -124,16 +129,20 @@ def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_
         fqn = f"{sub['cell']['ns']}/{sub['cell']['fn']}"
         if fqn not in declared_inputs:
             fail("E_INPUT_UNDECLARED", f"input {h} is a cell of {fqn}, which the descriptor does not declare", p)
-        if sub["asof"] != r["asof"]:
-            fail("E_TIME_ORDER", f"input {h} has asof {sub['asof']}, not {r['asof']}", p)
+        # at or before the receipt's asof (D17, spec-0.3.0); canonical instants compare as strings (3.3)
+        if sub["asof"] > r["asof"]:
+            fail("E_TIME_ORDER", f"input {h} has asof {sub['asof']}, after the receipt's {r['asof']}", p)
         if latest_tx is None or sub["tx"] > latest_tx:
             latest_tx = sub["tx"]
     if latest_tx is not None and r["tx"] != latest_tx:
         fail("E_TIME_ORDER", f"a computed cell's tx is the latest input tx ({latest_tx})", "$.tx")
-    # 7.6 value
+    # 7.6 value; without one, evaluation is unavailable (not a failure)
+    if "value" not in recompute:
+        return False
     v = dict(recompute["value"])
     if not _model.same_scalar(v, {"type": r["type"], "value": r["value"]}):
         fail("E_VALUE_MISMATCH", "the recomputed value differs from the receipt's", "$.value")
+    return True
 
 
 def check_blob_content(r: Dict[str, Any], content: bytes) -> None:
@@ -149,10 +158,12 @@ def _check_recompute_arg(recompute: Any) -> None:
     if recompute is None:
         return
     if not isinstance(recompute, Mapping):
-        raise TypeError("recompute must be a mapping with 'value' and optional 'descriptor' and 'inputs'")
-    v = recompute.get("value")
-    if not isinstance(v, Mapping) or "type" not in v or "value" not in v:
-        raise TypeError("recompute['value'] must be {'type': ..., 'value': ...}: the evaluated result")
+        raise TypeError("recompute must be a mapping with optional 'descriptor', 'inputs' and 'value'")
+    if "value" in recompute:
+        v = recompute["value"]
+        if not isinstance(v, Mapping) or "type" not in v or "value" not in v:
+            raise TypeError("recompute['value'] must be {'type': ..., 'value': ...}: the evaluated result "
+                            "(leave it out when the function could not be evaluated)")
     inputs = recompute.get("inputs")
     if inputs is not None and not isinstance(inputs, Mapping):
         raise TypeError("recompute['inputs'] must be a mapping of receipt hash to receipt JSON text")
@@ -168,11 +179,21 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
     validity windows), or a list of those; the first source that covers the
     ``computed_by`` host is used. ``recompute`` (optional) enables step 7:
     ``{"descriptor": ..., "inputs": {hash: receipt text}, "value": {"type", "value"}}``.
+    ``descriptor`` is the descriptor obtained for ``cell.fn_hash``: a parsed JSON
+    value, or JSON text/bytes (parsed strictly); leave it out when none was
+    obtained (E_FN_UNAVAILABLE). Any other value, ``None`` (JSON null)
+    included, is a descriptor offered and must hash to ``cell.fn_hash``
+    (E_FN_HASH_MISMATCH). ``value`` is what evaluating the function gave; leave
+    it out when the function could not be evaluated: once steps 7.1-7.5 pass,
+    the result is then ok at level ``signed`` with ``code`` ``"E_EVAL_UNAVAILABLE"``
+    and ``path`` ``"$.value"`` (SPEC 10.1 step 7.6).
     ``blob`` (optional): the content bytes of a blob value. Step 7.7 then runs
     last (after step 7 if ``recompute`` is given, else directly after step 6):
     the receipt's ``type`` must be ``blob`` (E_SCHEMA otherwise) and the content
     must have the blob's length and SHA-256 (E_BLOB_MISMATCH). The level stays
-    ``signed`` or ``recomputed``; ``blob_checked`` reports that 7.7 passed.
+    ``signed`` or ``recomputed``; ``blob_checked`` reports that 7.7 passed. 7.7
+    also runs after E_EVAL_UNAVAILABLE: if it passes the code is kept, if it
+    fails its failure is reported instead.
 
     Never raises for an invalid receipt or bad key material: the outcome is in
     the returned :class:`VerifyResult`. Raises TypeError only for arguments of
@@ -188,9 +209,14 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
     try:
         r, h = _signed(receipt, sources)
         level, detail = "signed", "signature-valid"
+        code, path = "OK", None
         if recompute is not None:
-            _recompute(r, recompute, sources)
-            level, detail = "recomputed", "fully verified by recomputation"
+            if _recompute(r, recompute, sources):
+                level, detail = "recomputed", "fully verified by recomputation"
+            else:
+                code, path = "E_EVAL_UNAVAILABLE", "$.value"
+                detail = ("signature-valid; recomputation checks 7.1-7.5 passed, but the function was not "
+                          "evaluated (no value supplied)")
         checked = False
         if blob is not None:
             if r["type"] != "blob":
@@ -198,7 +224,7 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
             check_blob_content(r, bytes(blob))
             detail += "; blob content matches"
             checked = True
-        return VerifyResult(True, "OK", level, h, r["computed_by"], detail, None, checked)
+        return VerifyResult(True, code, level, h, r["computed_by"], detail, path, checked)
     except DatumeshError as e:
         h = h or getattr(e, "receipt_hash", None)
         return VerifyResult(False, e.code, None, h, None, e.detail, e.path)

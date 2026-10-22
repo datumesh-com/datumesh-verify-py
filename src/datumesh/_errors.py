@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import NoReturn, Optional
 
-#: Every error code SPEC.md 10.2 defines, in the order of its table.
+#: Every error code SPEC.md 10.2 defines, in the order of its table. One, ``E_EVAL_UNAVAILABLE``,
+#: is not a failure: :func:`verify` reports it with success (SPEC 10.1 step 7.6).
 ERROR_CODES: tuple[str, ...] = (
     "E_PARSE_JSON",
     "E_PARSE_DUPLICATE_KEY",
@@ -45,6 +46,7 @@ ERROR_CODES: tuple[str, ...] = (
     "E_INPUT_INVALID",
     "E_INPUT_UNDECLARED",
     "E_VALUE_MISMATCH",
+    "E_EVAL_UNAVAILABLE",
     "E_BLOB_MISMATCH",
     "E_ENVELOPE",
 )

@@ -204,9 +204,11 @@ while i < N:
                     rc["descriptor"] = mutate(rc["descriptor"])
                 elif rnd.random() < 0.5:
                     rc["value"] = {"type": rnd.choice(["number", "string"]), "value": rnd.choice(["1.0892", "108.92", "1", "x"])}
+                elif rnd.random() < 0.5:
+                    rc.pop("value", None)  # evaluation unavailable (E_EVAL_UNAVAILABLE, spec-0.3.0)
                 else:
                     rc.pop("inputs", None)
-                if "value" not in rc or not isinstance(rc.get("value"), dict):
+                if "value" in rc and not isinstance(rc["value"], dict):
                     continue
             else:
                 h = rnd.choice(list(v["keys"]))

@@ -1,6 +1,6 @@
 """datumesh: verify Datumesh receipts (signed answers for addressable data cells).
 
-Implements the Datumesh protocol specification, revision ``spec-0.2.1``
+Implements the Datumesh protocol specification, revision ``spec-0.3.0``
 (https://github.com/datumesh-com/datumesh-spec): RFC 8785 canonical JSON,
 SHA-256 hashes, Ed25519 receipt signatures, blob content, units, cell URIs,
 response envelopes and key documents. Only :func:`fetch_keys` touches the network.
@@ -19,9 +19,9 @@ from ._keys import Key, KeysResult, fetch_keys, key_id, keys_from_response
 from ._uri import format_uri, parse_uri, uri_to_https
 from ._verify import VerifyResult, load, payload_bytes, verify
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 #: The specification revision this package conforms to.
-SPEC_VERSION = "spec-0.2.1"
+SPEC_VERSION = "spec-0.3.0"
 #: Every literal unit listed in units.md (index units, ``index:<period>=<value>``, are a pattern and not listed).
 UNITS = tuple(sorted(_units.LITERALS))
 #: The currency codes of units.md 2.1.
