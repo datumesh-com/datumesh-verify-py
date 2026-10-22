@@ -9,7 +9,7 @@ licences); characters, NFC, then length (strings, SPEC 3.5).
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 from ._errors import fail
 from ._unicode import is_assigned, is_nfc
@@ -152,7 +152,7 @@ def check_blob(s: str, path: Optional[str]) -> None:
              f"at most {LIMIT_MEDIA_TYPE} characters>", path)
 
 
-def blob_parts(s: str) -> tuple:
+def blob_parts(s: str) -> Tuple[str, int, str]:
     """(sha256 hex, length, media type) of a blob value already checked with :func:`check_blob`."""
     digest, length, media = s.split(":", 2)
     return digest, int(length), media

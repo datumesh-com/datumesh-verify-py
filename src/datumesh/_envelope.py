@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Mapping, NoReturn, Optional, Tuple, Union
 
 from . import _lexical as lx
 from . import _units
@@ -59,7 +59,7 @@ class EnvelopeResult:
     path: Optional[str]
 
 
-def _bad(detail: str, path: str) -> None:
+def _bad(detail: str, path: str) -> NoReturn:
     fail("E_ENVELOPE", detail, path)
 
 
