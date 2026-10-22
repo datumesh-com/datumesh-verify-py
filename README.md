@@ -1,10 +1,10 @@
 # datumesh
 
-Verify [Datumesh](https://datumesh.com) receipts in Python. A receipt is a signed answer for one addressable data cell; this library checks its canonical form (RFC 8785 JSON) and its Ed25519 signature against the signer's published keys, and optionally the recomputation checks (function descriptor, input receipts, and a value you computed) and the content of a blob value, as the [Datumesh specification](https://github.com/datumesh-com/datumesh-spec/blob/spec-0.2.1/SPEC.md) (revision `spec-0.2.1`) defines. It also checks a mesh's response envelope and resolves the unit of a cell's value.
+Verify [Datumesh](https://datumesh.com) receipts in Python. A receipt is a signed answer for one addressable data cell; this library checks its canonical form (RFC 8785 JSON) and its Ed25519 signature against the signer's published keys, and optionally the recomputation checks (function descriptor, input receipts, and a value you computed) and the content of a blob value, as the [Datumesh specification](https://github.com/datumesh-com/datumesh-spec/blob/spec-0.3.0/SPEC.md) (revision `spec-0.3.0`) defines. It also checks a mesh's response envelope and resolves the unit of a cell's value.
 
 ```sh
 pip install datumesh
-git clone --depth 1 --branch spec-0.2.1 https://github.com/datumesh-com/datumesh-spec && cd datumesh-spec
+git clone --depth 1 --branch spec-0.3.0 https://github.com/datumesh-com/datumesh-spec && cd datumesh-spec
 ```
 
 ```python
@@ -22,8 +22,8 @@ Website: https://datumesh.com · Specification: https://github.com/datumesh-com/
 
 ## API
 
-- `verify(receipt, keys, recompute=None, blob=None) -> VerifyResult`: runs the verification procedure of SPEC 10.1. Never raises for an invalid receipt or bad key material; the result has `ok`, `code` (`"OK"` or an error code), `level` (`"signed"` or `"recomputed"`), `hash`, `key`, `detail` and `path`. It uses no network: keys are an argument (a key document, a `KeysResult`, a `{key id: public key}` mapping, or a list of these). `recompute` takes the descriptor, the input receipts and the value you computed (the library does not evaluate functions); `blob` takes the content bytes of a blob value, whose length and SHA-256 are then checked (step 7.7, reported as `blob_checked`).
-- `check_envelope(status, body, keys, request) -> EnvelopeResult`: checks a mesh's response to `https://<mesh>/cell/...` (SPEC 5.5), verifies the receipt inside it, and checks that it answers your request (`request` is `{"cell_id": ..., "asof": ...}`, `asof` only if you asked for one; a stale receipt may answer an earlier `asof`). The envelope itself is unsigned: `stale`, `superseded_by` and a `verified` label remain the mesh's claims.
+- `verify(receipt, keys, recompute=None, blob=None) -> VerifyResult`: runs the verification procedure of SPEC 10.1. Never raises for an invalid receipt or bad key material; the result has `ok`, `code` (`"OK"` or an error code), `level` (`"signed"` or `"recomputed"`), `hash`, `key`, `detail` and `path`. One code comes with success: when you pass `recompute` without a `value` because you could not evaluate the function, the other recomputation checks still run, and if they pass the result is ok at level `signed` with `code` `"E_EVAL_UNAVAILABLE"` (SPEC 10.1 step 7.6). It uses no network: keys are an argument (a key document, a `KeysResult`, a `{key id: public key}` mapping, or a list of these). `recompute` takes the descriptor (leave it out if you have none; `None` is a JSON null and fails the hash check), the input receipts and the value you computed (the library does not evaluate functions); `blob` takes the content bytes of a blob value, whose length and SHA-256 are then checked (step 7.7, reported as `blob_checked`).
+- `check_envelope(status, body, keys, request) -> EnvelopeResult`: checks a mesh's response to `https://<mesh>/cell/...` (SPEC 5.5), verifies the receipt inside it, and checks that it answers your request (`request` is `{"cell_id": ..., "asof": ...}`, `asof` only if you asked for one; the receipt's `asof` must be at or before it, for `ok` and `stale` alike). The envelope itself is unsigned: `stale`, `superseded_by`, a `verified` label and the currency `ok` asserts remain the mesh's claims.
 - `resolved_unit(descriptor, cell) -> str | None`: the unit of a cell's value, such as `USD/EUR` (SPEC 7.1, units.md).
 - `keys_from_response(host, status, body) -> KeysResult`: interprets a response for `https://<host>/.well-known/datumesh.json` (SPEC 9.3).
 - `fetch_keys(host, timeout=10.0) -> KeysResult`: the only function that uses the network. One GET, TLS verified, redirects not followed.

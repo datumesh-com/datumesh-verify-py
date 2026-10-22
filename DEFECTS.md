@@ -1,7 +1,8 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Three sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.2.1` (status of every entry
-at that revision, and DEF-39), then `spec-0.2.0` (DEF-23 to DEF-38). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
+Four sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.3.0` (what that revision
+resolves, and DEF-40 to DEF-41), then `spec-0.2.1` (status of every entry at that revision, and
+DEF-39), then `spec-0.2.0` (DEF-23 to DEF-38). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
 `spec-0.2.0` section says so.
 
 # spec-0.1.1
@@ -384,6 +385,66 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 - Vector `canonical` strings may contain U+2028 (`jcs/escapes`), which some JSON-lines tooling
   treats as a line break; the conformance runner here escapes all non-ASCII output for that
   reason. Worth a sentence in 11 for harness authors.
+
+# spec-0.3.0
+
+Spec commit `3bac3d4` (the `spec-0.3.0` draft; the tag is to be put on it, or on a later commit).
+This library is 0.3.0 and conforms: 365/365 vectors, through the API and through
+`tools/run_vectors.py`. `tests/test_spec_0_3_0.py` tests each change through the API.
+
+| Entry | Status at 3bac3d4 |
+|---|---|
+| DEF-16 | (b) resolved (9.3, 11): only the integer 200 is a retrieved document; `"200"`, any other value, or no status is `E_KEY_UNAVAILABLE`. `keys_from_response` already did this; vectors `invalid/keys-status-string`, `invalid/keys-status-missing`. Fully closed. |
+| DEF-17 | Resolved (10.1 step 7.1, 11, D35), with a change here: a `None` descriptor is a JSON `null` offered and is `E_FN_HASH_MISMATCH`; only a `recompute` without the `descriptor` member is `E_FN_UNAVAILABLE`. That was a divergence (null as absent); `verify(..., {"descriptor": None, ...})` now gives another code. A `recompute` without `value` is no longer a `TypeError`: it means evaluation is unavailable (`E_EVAL_UNAVAILABLE`). Text or bytes are still parsed strictly first, as 7.1 now says for bytes; see DEF-40. Closed. |
+| DEF-34 | Open again for `spec-0.3.0`: the tag does not exist yet. README and the packaging test name `spec-0.3.0`; the packaging test pins commit `3bac3d4`. |
+
+The other changes of the revision, each implemented:
+
+- **D17 revised (8.2, 10.1 step 7.5).** An input receipt's `asof` at or before the receipt's;
+  only a later one is `E_TIME_ORDER` (path `$.inputs[i]`). `tx` must still equal the latest input
+  `tx`. Instants compare as strings (3.3).
+- **D31 revised (5.5 step 5).** `ok`, like `stale`, accepts a receipt `asof` at or before the
+  requested `asof` (`E_ENVELOPE` at `$.receipt.asof` when later). `invalid/envelope-wrong-asof` is
+  now valid.
+- **`E_EVAL_UNAVAILABLE` (10.1 step 7.6, 10.2, D34).** Added to `ERROR_CODES` after
+  `E_VALUE_MISMATCH`. `verify` with a `recompute` that has no `value` returns, once 7.1-7.5 pass,
+  `ok=True`, `level="signed"`, `code="E_EVAL_UNAVAILABLE"`, `path="$.value"`. Step 7.7 still
+  runs: on pass `blob_checked` is true and the code is kept, on failure the result is the ordinary
+  failure (`E_BLOB_MISMATCH`, or `E_SCHEMA` for content of a non-blob value). An `error`
+  envelope may carry the code (it is in 10.2, so `check_envelope` accepted it as soon as it was
+  in the list). The runner emits `code` only for such a result.
+- **3.7.** The 128-character limit was already on the whole media type, with no per-name limit.
+
+## DEF-40. 10.1 step 7.1 / 11: a descriptor given as text, in an API that takes parsed values too
+
+**Problem.** 7.1 says a verifier that obtains the descriptor *as bytes* parses them strictly, and
+11 says a vector's `descriptor` is a JSON value, a JSON string being a string value. A library
+whose API takes both parsed values and JSON text (this one, everywhere: `canonicalize`,
+`verify`'s receipt, `resolved_unit`) must choose what a Python `str` means. The text does not
+say, and the two readings give different codes for the same call.
+
+**Resolution.** As for every other argument of this library, a `str` (or `bytes`) descriptor is
+JSON text and is parsed strictly first (parse failures keep their codes, `E_PARSE_JSON` or
+`E_PARSE_DUPLICATE_KEY`, at path `descriptor`). A caller who wants to offer a JSON string value
+passes its JSON text (`json.dumps(s)`); the conformance runner does this for a vector's string
+descriptor, so `invalid/receipt-descriptor-text` is `E_FN_HASH_MISMATCH`.
+
+**Proposed wording (7.1, after "parses them strictly first").** "An implementation whose
+interface also takes text in place of a parsed value says which it takes; text is then the
+obtained bytes."
+
+## DEF-41. 10.1 step 7 / 11: no code when step 7 is not attempted
+
+**Problem.** 7.6 reports `E_EVAL_UNAVAILABLE` when "the verifier cannot evaluate the function".
+A verifier that does not attempt recomputation at all (step 7 is optional) also cannot evaluate
+it. Only 11 ("`code` ... when `recompute` has no `value`") and the vectors without `recompute`,
+which carry no `code`, show that skipping step 7 reports nothing.
+
+**Resolution.** `verify` without `recompute` reports `code="OK"` at level `signed`, as before;
+`E_EVAL_UNAVAILABLE` only when `recompute` is given without `value`.
+
+**Proposed wording (7.6).** "... recomputation stops here with `E_EVAL_UNAVAILABLE`. A verifier
+that does not attempt step 7 reports no code."
 
 ---
 
