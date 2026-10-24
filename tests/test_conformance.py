@@ -8,7 +8,8 @@ import subprocess
 import sys
 import unittest
 
-from util import ROOT, blob_of, env_keys, expected_output, load_vectors, recompute_of, runner, vectors_of
+from util import (FORMULA_KINDS, ROOT, blob_of, env_keys, expected_output, load_vectors, recompute_of, runner,
+                  runner_output, vectors_of, verifier_vectors)
 
 import datumesh
 
@@ -16,18 +17,24 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        self.assertEqual(sum(counts.values()), 365, counts)
+        # spec-0.4.0 (SPEC 14): 978 vectors; 432 for verifier libraries, the rest for formula evaluators
+        self.assertEqual(sum(counts.values()), 978, counts)
+        self.assertEqual(len(verifier_vectors()), 432, counts)
+        self.assertEqual(sum(counts[k] for k in FORMULA_KINDS), 546, counts)
         self.assertEqual(counts["unit"], 13, counts)
-        self.assertEqual(counts["envelope"], 60, counts)
-        # every vector's id is its path, and every kind is one the runner knows
+        self.assertEqual(counts["envelope"], 63, counts)
+        self.assertEqual(counts["slice"], 18, counts)
+        self.assertEqual(counts["function"], 48 + 16, counts)
+        self.assertEqual(len([v for v in vectors_of("receipt") if "slice" in v["id"]]), 30, counts)
+        # every kind is one the runner knows (or skips)
         for v in load_vectors():
             self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",
-                                      "receipt", "unit", "envelope"), v["id"])
+                                      "receipt", "unit", "envelope", "slice") + FORMULA_KINDS, v["id"])
 
     def test_every_vector_in_process(self) -> None:
         run = runner().run_vector
         tally = collections.Counter()
-        for v in load_vectors():
+        for v in verifier_vectors():
             with self.subTest(v["id"]):
                 got = run(v)
                 self.assertEqual(got, expected_output(v))
@@ -48,11 +55,13 @@ class ConformanceTest(unittest.TestCase):
         for v, line in zip(vectors, lines):
             got = json.loads(line)
             key = (v["kind"], "valid" if v["valid"] else "invalid")
-            if got == expected_output(v):
+            if v["kind"] in FORMULA_KINDS:
+                key = ("skipped " + v["kind"], key[1])
+            if got == runner_output(v):
                 passed[key] += 1
             else:
                 failed[key] += 1
-                self.fail(f"{v['id']}: expected {expected_output(v)}, got {got}")
+                self.fail(f"{v['id']}: expected {runner_output(v)}, got {got}")
         print("\nconformance (runner): " + ", ".join(f"{k[0]}/{k[1]} {n} pass" for k, n in sorted(passed.items()))
               + f"; failures {sum(failed.values())}", file=sys.stderr)
 
@@ -71,13 +80,15 @@ class ConformanceTest(unittest.TestCase):
                 res = datumesh.verify(v["input"], env_keys(v["keys"]), rc, blob_of(v))
                 if v["valid"]:
                     self.assertTrue(res.ok, res)
-                    # SPEC 10.1 step 7.6 (spec-0.3.0): E_EVAL_UNAVAILABLE is reported with success, at $.value
+                    # SPEC 10.1 step 7.6: E_EVAL_UNAVAILABLE (spec-0.3.0) at $.value and E_INPUT_SUPERSEDED
+                    # (spec-0.4.0) at $.inputs are reported with success
                     self.assertEqual(res.code, v.get("code", "OK"))
                     self.assertEqual(res.level, v["level"])
                     self.assertEqual(res.hash, v["sha256"])
                     self.assertEqual(res.blob_checked, "blob_hex" in v)
                     self.assertEqual(res.key, json.loads(v["input"])["computed_by"])
-                    self.assertEqual(res.path, "$.value" if "code" in v else None)
+                    self.assertEqual(res.path, {None: None, "E_EVAL_UNAVAILABLE": "$.value",
+                                                "E_INPUT_SUPERSEDED": "$.inputs"}[v.get("code")])
                     # bytes input and parsed input give the same result
                     self.assertEqual(datumesh.verify(v["input"].encode(), env_keys(v["keys"]), rc, blob_of(v)), res)
                     self.assertEqual(datumesh.verify(json.loads(v["input"]), env_keys(v["keys"]), rc, blob_of(v)), res)
@@ -129,6 +140,25 @@ class ConformanceTest(unittest.TestCase):
                     self.assertFalse(res.ok)
                     self.assertEqual(res.code, v["error"])
                     self.assertEqual((res.outcome, res.trust, res.receipt_hash), (None, None, None))
+
+    def test_slice_vectors_through_the_api(self) -> None:
+        for v in vectors_of("slice"):
+            with self.subTest(v["id"]):
+                obj = json.loads(v["input"])
+                kind = "manifest" if isinstance(obj, dict) and ("members" in obj or "slice" in obj) else "slice"
+                if v["valid"]:
+                    self.assertEqual(datumesh.canonicalize(v["input"], kind).decode(), v["canonical"])
+                    if kind == "manifest":
+                        self.assertEqual(datumesh.slice_id(obj["slice"]), v["slice_id"])
+                        self.assertEqual(datumesh.members_hash(obj["members"]), v["members_hash"])
+                        self.assertEqual(datumesh.slice_entry(v["input"]), v["entry"])
+                    else:
+                        self.assertEqual(datumesh.slice_id(v["input"]), v["slice_id"])
+                        self.assertEqual(v["slice_id"], v["sha256"])
+                else:
+                    with self.assertRaises(datumesh.DatumeshError) as cm:
+                        datumesh.canonicalize(v["input"], kind)
+                    self.assertEqual(cm.exception.code, v["error"])
 
     def test_invalid_vectors_raise_exact_code(self) -> None:
         for v in load_vectors():

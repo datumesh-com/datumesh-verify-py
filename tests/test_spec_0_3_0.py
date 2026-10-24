@@ -85,7 +85,8 @@ class EvalUnavailableTest(unittest.TestCase):
         codes = datumesh.ERROR_CODES
         self.assertIn("E_EVAL_UNAVAILABLE", codes)
         i = codes.index("E_EVAL_UNAVAILABLE")
-        self.assertEqual((codes[i - 1], codes[i + 1]), ("E_VALUE_MISMATCH", "E_BLOB_MISMATCH"))
+        # spec-0.4.0 put E_INPUT_SUPERSEDED after it
+        self.assertEqual((codes[i - 1], codes[i + 1]), ("E_VALUE_MISMATCH", "E_INPUT_SUPERSEDED"))
         self.assertEqual(DatumeshError("E_EVAL_UNAVAILABLE").code, "E_EVAL_UNAVAILABLE")
 
     def test_stored_and_computed(self) -> None:
@@ -150,7 +151,8 @@ class EvalUnavailableTest(unittest.TestCase):
             with self.subTest(v["id"]):
                 out = run(v)
                 if v["valid"] and v.get("code"):
-                    self.assertEqual(out.get("code"), "E_EVAL_UNAVAILABLE")
+                    # E_EVAL_UNAVAILABLE, or since spec-0.4.0 E_INPUT_SUPERSEDED
+                    self.assertEqual(out.get("code"), v["code"])
                     self.assertEqual(out["level"], "signed")
                 else:
                     self.assertNotIn("code", out)
@@ -262,12 +264,6 @@ class MediaTypeLengthTest(unittest.TestCase):
         self.assertIsNone(code("a" * 126 + "/b"))
         self.assertEqual(code("a" * 127 + "/b"), "E_CANON_BLOB")
         self.assertIsNone(code("a" * 63 + "/" + "b" * 64))
-
-
-class VersionTest(unittest.TestCase):
-    def test_versions(self) -> None:
-        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.3.0")
-        self.assertEqual(datumesh.__version__, "0.3.0")
 
 
 if __name__ == "__main__":

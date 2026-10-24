@@ -27,6 +27,16 @@ def load_vectors() -> List[Dict[str, Any]]:
     return [json.loads(f.read_text(encoding="utf-8")) for f in files]
 
 
+#: Vector kinds for formula evaluators, not for verifier libraries (CONTRACT-0.4.0-libs item 9, SPEC 11 and
+#: 15): the runner skips them.
+FORMULA_KINDS = ("formula", "formula-eval", "excel", "decimal")
+
+
+def verifier_vectors() -> List[Dict[str, Any]]:
+    """Every vector a verifier library runs: all but the formula evaluator kinds."""
+    return [v for v in load_vectors() if v["kind"] not in FORMULA_KINDS]
+
+
 def vectors_of(kind: str, valid: Any = None) -> List[Dict[str, Any]]:
     return [v for v in load_vectors() if v["kind"] == kind and (valid is None or v["valid"] == valid)]
 
@@ -64,6 +74,8 @@ OUTPUTS = {
     "unit": ["unit"],
     # envelope: outcome, and trust and receipt_hash only when the envelope carries a receipt
     "envelope": ["outcome", "trust", "receipt_hash"],
+    # slice (spec-0.4.0): members_hash and entry only for a manifest
+    "slice": ["canonical", "sha256", "slice_id", "members_hash", "entry"],
 }
 
 
@@ -73,15 +85,26 @@ def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
         for k in OUTPUTS[v["kind"]]:
             if v["kind"] == "envelope" and k != "outcome" and k not in v:
                 continue
+            if v["kind"] == "slice" and k in ("members_hash", "entry") and k not in v:
+                continue
             exp[k] = v[k]
         if v["kind"] == "receipt" and "blob_hex" in v:
             # SPEC 11: "blob_checked (true) when blob_hex is given". The vector files carry it since
             # spec commit 1400247 (DEFECTS.md DEF-35); the rule is the fallback.
             exp["blob_checked"] = v.get("blob_checked", True)
         if v["kind"] == "receipt" and "code" in v:
-            # SPEC 11 (spec-0.3.0): a code reported with success, only E_EVAL_UNAVAILABLE.
+            # SPEC 11: a code reported with success, E_EVAL_UNAVAILABLE (spec-0.3.0) or
+            # E_INPUT_SUPERSEDED (spec-0.4.0).
             exp["code"] = v["code"]
     return exp
+
+
+def runner_output(v: Dict[str, Any]) -> Dict[str, Any]:
+    """What the runner writes for a vector: the expected output, or for a formula evaluator kind the
+    skip line (the kind is not for verifier libraries)."""
+    if v["kind"] in FORMULA_KINDS:
+        return {"id": v["id"], "error": None, "skipped": v["kind"]}
+    return expected_output(v)
 
 
 def recompute_of(v: Dict[str, Any]) -> Any:
