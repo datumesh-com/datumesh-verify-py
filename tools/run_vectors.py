@@ -21,8 +21,8 @@ an absent ``value`` means evaluation is unavailable; its ``manifests`` (slice
 entry to manifest text) and ``lineage`` (spec-0.4.0) are passed as they are. A
 receipt vector's ``blob_hex`` is passed to ``verify`` as the blob content (step
 7.7), and the output then has ``blob_checked``; an envelope vector's ``request``
-is passed to ``check_envelope``. A slice vector's input is a manifest when it is
-an object with ``members`` or ``slice``, else a slice object.
+is passed to ``check_envelope``. A slice vector's input is a manifest exactly when
+it is an object with a ``members`` member, else a slice object (SPEC 11).
 
 The kinds ``formula``, ``formula-eval``, ``excel`` and ``decimal`` (spec-0.4.0)
 are for formula evaluators, not verifier libraries: this library evaluates no
@@ -123,7 +123,7 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
             out["unit"] = datumesh.resolved_unit(json.dumps(obj["descriptor"]), json.dumps(obj["cell"]))
         elif kind == "slice":
             obj = datumesh.parse_json(_input(v))
-            if isinstance(obj, dict) and ("members" in obj or "slice" in obj):
+            if isinstance(obj, dict) and "members" in obj:  # SPEC 11: a manifest exactly when it has members
                 b = datumesh.canonicalize(obj, "manifest")
                 entry = datumesh.slice_entry(obj)
                 _, sid, members = entry.split(":")

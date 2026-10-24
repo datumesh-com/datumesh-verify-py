@@ -121,28 +121,34 @@ def _cell_id(r: Dict[str, Any]) -> str:
 
 def _superseded(r: Dict[str, Any], plain: Dict[str, Dict[str, Any]], lineage: Any,
                 supplied: Mapping[str, Any], sources: Tuple[_Source, ...]) -> bool:
-    """Step 7.6 (spec-0.4.0): whether an entry of the receipt's ``inputs`` was replaced in the evaluation's
-    lineage: a receipt hash by a receipt of the same cell with a later ``tx``, obtained from ``supplied``,
-    signature-valid through step 6 and hashing to its entry; a slice entry by an entry for the same slice
-    id with another members hash."""
-    entries = [e for e in lineage if e not in set(r["inputs"])]
-    slice_entries = {e.split(":")[1] for e in entries if lx.is_slice_entry(e) and e.count(":") == 2}
+    """Step 7.6 (spec-0.4.0, as settled at 18be70f): whether an entry ``e`` of the receipt's ``inputs`` was
+    replaced. The lineage is a set; an item that is not a string replaces nothing, and items are not otherwise
+    validated. ``e`` is replaced when the lineage does not list ``e`` and lists an ``n`` that ``inputs`` does
+    not list, such that: for a receipt hash ``e``, a receipt is offered for ``n`` in ``supplied``, it is
+    signature-valid through step 6, hashes to ``n``, has ``e``'s receipt's cell id and a strictly later
+    ``tx``; for a slice entry ``e``, ``n`` begins ``slice:<e's slice id>:``."""
+    items = {x for x in lineage if isinstance(x, str)}
+    inputs = set(r["inputs"])
+    news = [n for n in sorted(items) if n not in inputs]
     candidates: Optional[List[Dict[str, Any]]] = None
     for e in r["inputs"]:
+        if e in items:
+            continue
         if lx.is_slice_entry(e):
-            if e.split(":")[1] in slice_entries:
+            prefix = f"slice:{e.split(':')[1]}:"
+            if any(n.startswith(prefix) for n in news):
                 return True
             continue
         if candidates is None:  # the lineage's receipts, verified once
             candidates = []
-            for h in entries:
-                if lx.is_slice_entry(h) or h not in supplied:
+            for n in news:
+                if n not in supplied:
                     continue
                 try:
-                    sub, sub_hash = _signed(supplied[h], sources)
+                    sub, sub_hash = _signed(supplied[n], sources)
                 except DatumeshError:
                     continue
-                if sub_hash == h:
+                if sub_hash == n:
                     candidates.append(sub)
         old = plain[e]
         cid = _cell_id(old)
@@ -265,8 +271,9 @@ def _check_recompute_arg(recompute: Any) -> None:
     if manifests is not None and not isinstance(manifests, Mapping):
         raise TypeError("recompute['manifests'] must be a mapping of slice entry to manifest JSON text")
     lineage = recompute.get("lineage")
-    if lineage is not None and (not isinstance(lineage, (list, tuple)) or not all(isinstance(e, str) for e in lineage)):
-        raise TypeError("recompute['lineage'] must be a list of inputs entries (strings): what the evaluation read")
+    if lineage is not None and not isinstance(lineage, (list, tuple)):
+        raise TypeError("recompute['lineage'] must be a list of inputs entries: what the evaluation read "
+                        "(an item that is not a string replaces nothing, SPEC 10.1 step 7.6)")
 
 
 def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = None,
@@ -285,7 +292,8 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
     of ``inputs`` (missing: E_INPUT_UNAVAILABLE). Receipts and manifests are JSON
     text or bytes (parsed strictly) or parsed values. ``lineage`` (optional,
     spec-0.4.0) is the list of ``inputs`` entries the evaluation read, with their
-    receipts in ``inputs``; when the value differs it decides between
+    receipts in ``inputs`` (a set: order does not matter, items that are not strings
+    are ignored); when the value differs it decides between
     E_INPUT_SUPERSEDED and E_VALUE_MISMATCH (SPEC 10.1 step 7.6).
     ``descriptor`` is the descriptor obtained for ``cell.fn_hash``: a parsed JSON
     value, or JSON text/bytes (parsed strictly); leave it out when none was

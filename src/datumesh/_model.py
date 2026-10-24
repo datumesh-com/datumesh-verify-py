@@ -399,13 +399,20 @@ RANGE_TYPES = ("date", "instant", "number", "string")
 
 
 def is_version_slice(v: Dict[str, Any]) -> bool:
-    return "cell" in v
+    """4.4 (18be70f): an object whose members are exactly cell, from and to; anything else is cell-shaped."""
+    return set(v) == {"cell", "from", "to"}
+
+
+def _is_range(item: Any) -> bool:
+    """4.4 (18be70f): an argument whose members are exactly hi, lo and type; anything else but "*" is read
+    as a typed scalar."""
+    return isinstance(item, dict) and set(item) == {"hi", "lo", "type"}
 
 
 def slice_structure(v: Any, path: str = "$") -> None:
     """Step 2 for a slice object (SPEC 4.4): a cell object whose arguments are typed scalars, the slice
     marker or range objects ``{"hi", "lo", "type"}``; or a version slice ``{"cell", "from", "to"}``."""
-    if isinstance(v, dict) and "cell" in v:
+    if isinstance(v, dict) and is_version_slice(v):
         require_object(v, path, ("cell", "from", "to"))
         _cell_like_structure(v["cell"], _child(path, "cell"), True)
         require_string(v["from"], _child(path, "from"), "from")
@@ -420,7 +427,7 @@ def slice_structure(v: Any, path: str = "$") -> None:
         item, p = args[name], _child(ap, name)
         if item == SLICE:
             continue
-        if isinstance(item, dict) and "value" not in item:
+        if _is_range(item):
             require_object(item, p, ("hi", "lo", "type"))
             for m in ("hi", "lo", "type"):
                 require_string(item[m], _child(p, m), m)
@@ -455,7 +462,7 @@ def slice_canonical(v: Dict[str, Any], path: str = "$") -> None:
         item = args[name]
         if item == SLICE:
             continue
-        if "value" in item:
+        if not _is_range(item):
             lx.check_typed_value(item["type"], item["value"], _child(p, "type"), _child(p, "value"))
             continue
         t = item["type"]
@@ -474,7 +481,7 @@ def slice_consistency(v: Dict[str, Any], path: str = "$") -> None:
     version slice's cell is checked for markers with the cell, in :func:`slice_canonical`.)"""
     if is_version_slice(v):
         return
-    if all(isinstance(a, dict) and "value" in a for a in v["args"].values()):
+    if not any(a == SLICE or _is_range(a) for a in v["args"].values()):
         fail("E_SLICE", "a slice object has at least one open or ranged argument", _child(path, "args"))
 
 
@@ -532,7 +539,7 @@ def member_of(slice_obj: Dict[str, Any], receipt: Dict[str, Any]) -> Optional[st
         s, c = sargs[name], cargs[name]
         if s == SLICE:
             continue
-        if "value" in s:
+        if not _is_range(s):
             if not same_scalar(s, c):
                 return f"the member's argument {name!r} differs from the slice's"
             continue
