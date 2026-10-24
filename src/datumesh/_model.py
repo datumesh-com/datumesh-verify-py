@@ -434,7 +434,14 @@ def slice_canonical(v: Dict[str, Any], path: str = "$") -> None:
     """Step 3 for a slice object, in JCS order like a cell. A range's ``type`` is checked before its ends,
     whose lexical rules it selects; booleans and blobs have no ranges (E_CANON_TYPE)."""
     if is_version_slice(v):
-        cell_canonical(v["cell"], _child(path, "cell"))
+        # "cell": a cell without markers (4.4), checked whole in its place in JCS order: its canonical form,
+        # then no slice marker (E_SLICE), before "from" and "to"
+        cp = _child(path, "cell")
+        cell_canonical(v["cell"], cp)
+        args = v["cell"]["args"]
+        for name in _sorted(args):
+            if args[name] == SLICE:
+                fail("E_SLICE", "a version slice is of one cell, without slice markers", f"{cp}.args.{name}")
         lx.check_instant(v["from"], _child(path, "from"))
         lx.check_instant(v["to"], _child(path, "to"))
         return
@@ -463,13 +470,9 @@ def slice_canonical(v: Dict[str, Any], path: str = "$") -> None:
 
 
 def slice_consistency(v: Dict[str, Any], path: str = "$") -> None:
-    """E_SLICE: a membership slice has an open or ranged argument; a version slice's cell has none."""
+    """E_SLICE: a membership slice has an open or ranged argument, checked after its canonical form. (A
+    version slice's cell is checked for markers with the cell, in :func:`slice_canonical`.)"""
     if is_version_slice(v):
-        args = v["cell"]["args"]
-        for name in _sorted(args):
-            if args[name] == SLICE:
-                fail("E_SLICE", "a version slice is of one cell, without slice markers",
-                     f"{path}.cell.args.{name}")
         return
     if all(isinstance(a, dict) and "value" in a for a in v["args"].values()):
         fail("E_SLICE", "a slice object has at least one open or ranged argument", _child(path, "args"))
