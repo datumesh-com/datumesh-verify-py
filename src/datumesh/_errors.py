@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import NoReturn, Optional
 
-#: Every error code SPEC.md 10.2 defines, in the order of its table. One, ``E_EVAL_UNAVAILABLE``,
-#: is not a failure: :func:`verify` reports it with success (SPEC 10.1 step 7.6).
+#: Every error code SPEC.md 10.2 defines, in the order of its table. Two, ``E_EVAL_UNAVAILABLE`` and
+#: ``E_INPUT_SUPERSEDED``, are not failures: :func:`verify` reports them with success (SPEC 10.1 step 7.6).
 ERROR_CODES: tuple[str, ...] = (
     "E_PARSE_JSON",
     "E_PARSE_DUPLICATE_KEY",
@@ -45,11 +45,22 @@ ERROR_CODES: tuple[str, ...] = (
     "E_INPUT_UNAVAILABLE",
     "E_INPUT_INVALID",
     "E_INPUT_UNDECLARED",
+    "E_SLICE_MEMBER",
     "E_VALUE_MISMATCH",
     "E_EVAL_UNAVAILABLE",
+    "E_INPUT_SUPERSEDED",
     "E_BLOB_MISMATCH",
     "E_ENVELOPE",
 )
+
+
+#: The codes :func:`verify` reports with success, at level ``signed`` (SPEC 10.1 step 7.6, 10.2).
+SUCCESS_CODES: tuple[str, ...] = ("E_EVAL_UNAVAILABLE", "E_INPUT_SUPERSEDED")
+
+#: The formula evaluation faults a ``not_covered`` envelope may carry as ``fault`` (SPEC 5.5, 15.11). They
+#: are not verification codes: no :class:`DatumeshError` has one.
+FAULT_CODES: tuple[str, ...] = ("E_FORMULA_DIV_ZERO", "E_FORMULA_DOMAIN", "E_FORMULA_RANGE", "E_FORMULA_EMPTY",
+                                "E_FORMULA_ABSENT", "E_FORMULA_FUTURE")
 
 
 class DatumeshError(ValueError):

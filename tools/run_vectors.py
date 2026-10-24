@@ -10,15 +10,24 @@ no output line contains U+2028 or other line separators):
 where the outputs (only when error is null) are exactly the section 11 output
 fields for the vector's kind: canonical, sha256, object, https (on mesh
 "mesh.example"), key_id, key_ids, sig, level, code (only for a valid receipt
-reported with E_EVAL_UNAVAILABLE), unit (may be null), outcome, and for an
-envelope with a receipt trust and receipt_hash. Key environments (``env``
+reported with E_EVAL_UNAVAILABLE or E_INPUT_SUPERSEDED), unit (may be null),
+outcome, and for an envelope with a receipt trust and receipt_hash; for a slice
+vector slice_id, and for a manifest members_hash and entry. Key environments (``env``
 of a keys vector, each host of a receipt or envelope vector's ``keys``) are
 converted with ``keys_from_response``; a status of "error" means a failed
 retrieval. A receipt vector's ``recompute`` is passed to ``verify``: its
 ``descriptor`` is a JSON value (a string is a string, not text to parse), and
-an absent ``value`` means evaluation is unavailable. A receipt vector's ``blob_hex`` is passed to ``verify`` as the blob
-content (step 7.7), and the output then has ``blob_checked``; an envelope
-vector's ``request`` is passed to ``check_envelope``.
+an absent ``value`` means evaluation is unavailable; its ``manifests`` (slice
+entry to manifest text) and ``lineage`` (spec-0.4.0) are passed as they are. A
+receipt vector's ``blob_hex`` is passed to ``verify`` as the blob content (step
+7.7), and the output then has ``blob_checked``; an envelope vector's ``request``
+is passed to ``check_envelope``. A slice vector's input is a manifest when it is
+an object with ``members`` or ``slice``, else a slice object.
+
+The kinds ``formula``, ``formula-eval``, ``excel`` and ``decimal`` (spec-0.4.0)
+are for formula evaluators, not verifier libraries: this library evaluates no
+function. They are skipped, with the line ``{"id": ..., "error": null,
+"skipped": <kind>}``.
 
     jq -c . spec/vectors/*/*.json | python tools/run_vectors.py
 """
@@ -38,6 +47,8 @@ except ImportError:  # running from a source checkout
     import datumesh
 
 MESH = "mesh.example"
+#: Vector kinds for formula evaluators (SPEC 11, 15): skipped.
+FORMULA_KINDS = ("formula", "formula-eval", "excel", "decimal")
 
 
 def _env_keys(host: str, env: Dict[str, Any]) -> datumesh.KeysResult:
@@ -65,6 +76,9 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
     """Run one vector; return the output object (id, error, and outputs when valid)."""
     kind = v.get("kind")
     out: Dict[str, Any] = {"id": v.get("id"), "error": None}
+    if kind in FORMULA_KINDS:
+        out["skipped"] = kind
+        return out
     try:
         if kind == "jcs":
             b = datumesh.jcs(_input(v))
@@ -97,7 +111,7 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
                 out.update(canonical=payload.decode("utf-8"), sha256=res.hash, sig=parsed["sig"], level=res.level)
                 if blob is not None:
                     out["blob_checked"] = res.blob_checked
-                if res.code != "OK":  # a code reported with success: only E_EVAL_UNAVAILABLE (SPEC 11)
+                if res.code != "OK":  # a code reported with success: E_EVAL_UNAVAILABLE, E_INPUT_SUPERSEDED (SPEC 11)
                     out["code"] = res.code
         elif kind == "unit":
             # input: JSON text of {"cell", "descriptor"}, parsed strictly
@@ -107,6 +121,18 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
             # Members are parsed JSON values: pass them as JSON text, so that a JSON string member is a
             # string value (resolved_unit would otherwise parse a str as JSON text).
             out["unit"] = datumesh.resolved_unit(json.dumps(obj["descriptor"]), json.dumps(obj["cell"]))
+        elif kind == "slice":
+            obj = datumesh.parse_json(_input(v))
+            if isinstance(obj, dict) and ("members" in obj or "slice" in obj):
+                b = datumesh.canonicalize(obj, "manifest")
+                entry = datumesh.slice_entry(obj)
+                _, sid, members = entry.split(":")
+                out.update(canonical=b.decode("utf-8"), sha256=hashlib.sha256(b).hexdigest(), slice_id=sid,
+                           members_hash=members, entry=entry)
+            else:
+                b = datumesh.canonicalize(obj, "slice")
+                out.update(canonical=b.decode("utf-8"), sha256=hashlib.sha256(b).hexdigest(),
+                           slice_id=hashlib.sha256(b).hexdigest())
         elif kind == "envelope":
             keys = [_env_keys(h, e) for h, e in (v.get("keys") or {}).items()]
             env = datumesh.check_envelope(v["status"], _input(v), keys, v["request"])

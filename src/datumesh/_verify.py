@@ -9,6 +9,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 from nacl.exceptions import CryptoError
 from nacl.signing import VerifyKey
 
+from . import _lexical as lx
 from . import _model
 from ._errors import DatumeshError, fail
 from ._json import check_json_value, jcs_bytes, parse_json
@@ -23,14 +24,17 @@ class VerifyResult:
     """The outcome of :func:`verify`.
 
     ``ok``: the receipt verified. ``code``: ``"OK"`` or the first failing
-    error code; on success it is ``"E_EVAL_UNAVAILABLE"`` instead of ``"OK"``
-    when recomputation was asked for without an evaluated ``value`` (SPEC 10.1
-    step 7.6: steps 7.1-7.5 passed, nothing was compared, the level stays
-    ``signed``). ``level``: ``"signed"`` (steps 1-6) or ``"recomputed"`` (step 7
-    too) when ok, else None. ``hash``: the receipt hash once the receipt is in
-    canonical form (steps 1-3 passed), else None. ``key``: the ``computed_by``
-    value when ok. ``detail``: human-readable text. ``path``: where the
-    failure is (a JSON path), ``"$.value"`` with ``E_EVAL_UNAVAILABLE``, or None.
+    error code; on success it is one of ``SUCCESS_CODES`` instead of ``"OK"``
+    (SPEC 10.1 step 7.6, the level stays ``signed``): ``"E_EVAL_UNAVAILABLE"``
+    when recomputation was asked for without an evaluated ``value`` (steps
+    7.1-7.5 passed, nothing was compared), ``"E_INPUT_SUPERSEDED"`` when the
+    value differs and the evaluation's lineage replaces an input (the receipt
+    is historical, not wrong). ``level``: ``"signed"`` (steps 1-6) or
+    ``"recomputed"`` (step 7 too) when ok, else None. ``hash``: the receipt hash
+    once the receipt is in canonical form (steps 1-3 passed), else None.
+    ``key``: the ``computed_by`` value when ok. ``detail``: human-readable text.
+    ``path``: where the failure is (a JSON path), ``"$.value"`` with
+    ``E_EVAL_UNAVAILABLE``, ``"$.inputs"`` with ``E_INPUT_SUPERSEDED``, or None.
     ``blob_checked``: True only when blob content was supplied and step 7.7 ran
     and passed (the level and the code are unchanged).
     """
@@ -80,9 +84,77 @@ def _signed(receipt: Any, sources: Tuple[_Source, ...]) -> Tuple[Dict[str, Any],
     return r, h
 
 
-def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_Source, ...]) -> bool:
-    """Step 7.1-7.6. Raises DatumeshError. Returns False when 7.1-7.5 passed and there is no
-    evaluated value to compare (E_EVAL_UNAVAILABLE), True when 7.6 passed."""
+def _manifest(supplied: Mapping[str, Any], entry: str, path: str) -> Dict[str, Any]:
+    """Step 7.5 for a slice entry: obtain its manifest (E_INPUT_UNAVAILABLE), parse it strictly, check its
+    structure and canonical form (their own codes), then that it hashes to the entry (E_INPUT_UNAVAILABLE)."""
+    if entry not in supplied:
+        fail("E_INPUT_UNAVAILABLE", f"no manifest supplied for {entry}", path)
+    m = load(supplied[entry], "manifest")
+    _model.validate_manifest(m, "manifest")
+    _, slice_id, members = entry.split(":")
+    if hashlib.sha256(jcs_bytes(m["slice"])).hexdigest() != slice_id:
+        fail("E_INPUT_UNAVAILABLE", f"the manifest supplied for {entry} is of another slice", path)
+    if hashlib.sha256(jcs_bytes(m["members"])).hexdigest() != members:
+        fail("E_INPUT_UNAVAILABLE", f"the manifest supplied for {entry} has other members", path)
+    out: Dict[str, Any] = m
+    return out
+
+
+def _input_receipt(supplied: Mapping[str, Any], h: str, sources: Tuple[_Source, ...], path: str,
+                   what: str = "input") -> Dict[str, Any]:
+    """Obtain (E_INPUT_UNAVAILABLE), verify through step 6 (E_INPUT_INVALID), check the hash (E_INPUT_UNAVAILABLE)."""
+    text = supplied.get(h)
+    if text is None:
+        fail("E_INPUT_UNAVAILABLE", f"{what} receipt {h} not supplied", path)
+    try:
+        sub, sub_hash = _signed(text, sources)
+    except DatumeshError as e:
+        fail("E_INPUT_INVALID", f"{what} {h}: {e.code}: {e.detail}", path)
+    if sub_hash != h:
+        fail("E_INPUT_UNAVAILABLE", f"the receipt supplied for {h} hashes to {sub_hash}", path)
+    return sub
+
+
+def _cell_id(r: Dict[str, Any]) -> str:
+    return hashlib.sha256(jcs_bytes(r["cell"])).hexdigest()
+
+
+def _superseded(r: Dict[str, Any], plain: Dict[str, Dict[str, Any]], lineage: Any,
+                supplied: Mapping[str, Any], sources: Tuple[_Source, ...]) -> bool:
+    """Step 7.6 (spec-0.4.0): whether an entry of the receipt's ``inputs`` was replaced in the evaluation's
+    lineage: a receipt hash by a receipt of the same cell with a later ``tx``, obtained from ``supplied``,
+    signature-valid through step 6 and hashing to its entry; a slice entry by an entry for the same slice
+    id with another members hash."""
+    entries = [e for e in lineage if e not in set(r["inputs"])]
+    slice_entries = {e.split(":")[1] for e in entries if lx.is_slice_entry(e) and e.count(":") == 2}
+    candidates: Optional[list] = None
+    for e in r["inputs"]:
+        if lx.is_slice_entry(e):
+            if e.split(":")[1] in slice_entries:
+                return True
+            continue
+        if candidates is None:  # the lineage's receipts, verified once
+            candidates = []
+            for h in entries:
+                if lx.is_slice_entry(h) or h not in supplied:
+                    continue
+                try:
+                    sub, sub_hash = _signed(supplied[h], sources)
+                except DatumeshError:
+                    continue
+                if sub_hash == h:
+                    candidates.append(sub)
+        old = plain[e]
+        cid = _cell_id(old)
+        if any(sub["tx"] > old["tx"] and _cell_id(sub) == cid for sub in candidates):
+            return True
+    return False
+
+
+def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_Source, ...]) -> str:
+    """Step 7.1-7.6. Raises DatumeshError. Returns ``"recomputed"`` when 7.6 passed, ``"unavailable"`` when
+    7.1-7.5 passed and there is no evaluated value to compare (E_EVAL_UNAVAILABLE), and ``"superseded"`` when
+    the value differs and the lineage replaces an input (E_INPUT_SUPERSEDED)."""
     # 7.1 descriptor: only an absent member is "none obtained". Whatever is obtained is a JSON
     # value (None is JSON null); text or bytes are parsed strictly first.
     if "descriptor" not in recompute:
@@ -111,21 +183,37 @@ def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_
     declared = _model.return_type(desc["signature"])
     if r["type"] != declared:
         fail("E_RETURN_TYPE", f"the function returns {declared}", "$.type")
-    # 7.5 inputs
+    # 7.5 inputs: receipt hashes and (spec-0.4.0) slice entries, each in its place
     supplied = recompute.get("inputs") or {}
+    manifests = recompute.get("manifests") or {}
     declared_inputs = set(desc["inputs"])
     latest_tx: Optional[str] = None
+    plain: Dict[str, Dict[str, Any]] = {}
     for i, h in enumerate(r["inputs"]):
         p = f"$.inputs[{i}]"
-        text = supplied.get(h)
-        if text is None:
-            fail("E_INPUT_UNAVAILABLE", f"input receipt {h} not supplied", p)
-        try:
-            sub, sub_hash = _signed(text, sources)
-        except DatumeshError as e:
-            fail("E_INPUT_INVALID", f"input {h}: {e.code}: {e.detail}", p)
-        if sub_hash != h:
-            fail("E_INPUT_UNAVAILABLE", f"the receipt supplied for {h} hashes to {sub_hash}", p)
+        if lx.is_slice_entry(h):
+            m = _manifest(manifests, h, p)
+            sl = m["slice"]
+            fqn = _model.slice_function(sl)
+            if fqn not in declared_inputs:
+                fail("E_INPUT_UNDECLARED", f"input {h} is a slice of {fqn}, which the descriptor does not declare", p)
+            seen = set()
+            for mh in m["members"]:
+                sub = _input_receipt(supplied, mh, sources, p, "member")
+                why = _model.member_of(sl, sub)
+                if why is not None:
+                    fail("E_SLICE_MEMBER", f"member {mh} of {h}: {why}", p)
+                if not _model.is_version_slice(sl):
+                    cid = _cell_id(sub)
+                    if cid in seen:
+                        fail("E_SLICE_MEMBER", f"member {mh} of {h} is a cell another member already is", p)
+                    seen.add(cid)
+                if sub["asof"] > r["asof"]:
+                    fail("E_TIME_ORDER", f"member {mh} has asof {sub['asof']}, after the receipt's {r['asof']}", p)
+                if latest_tx is None or sub["tx"] > latest_tx:
+                    latest_tx = sub["tx"]
+            continue
+        sub = _input_receipt(supplied, h, sources, p)
         fqn = f"{sub['cell']['ns']}/{sub['cell']['fn']}"
         if fqn not in declared_inputs:
             fail("E_INPUT_UNDECLARED", f"input {h} is a cell of {fqn}, which the descriptor does not declare", p)
@@ -134,15 +222,20 @@ def _recompute(r: Dict[str, Any], recompute: Mapping[str, Any], sources: Tuple[_
             fail("E_TIME_ORDER", f"input {h} has asof {sub['asof']}, after the receipt's {r['asof']}", p)
         if latest_tx is None or sub["tx"] > latest_tx:
             latest_tx = sub["tx"]
+        plain[h] = sub
+    # the latest tx of every input receipt, members included; none (only empty slices, or no inputs): no rule
     if latest_tx is not None and r["tx"] != latest_tx:
         fail("E_TIME_ORDER", f"a computed cell's tx is the latest input tx ({latest_tx})", "$.tx")
     # 7.6 value; without one, evaluation is unavailable (not a failure)
     if "value" not in recompute:
-        return False
+        return "unavailable"
     v = dict(recompute["value"])
-    if not _model.same_scalar(v, {"type": r["type"], "value": r["value"]}):
-        fail("E_VALUE_MISMATCH", "the recomputed value differs from the receipt's", "$.value")
-    return True
+    if _model.same_scalar(v, {"type": r["type"], "value": r["value"]}):
+        return "recomputed"
+    lineage = recompute.get("lineage")
+    if lineage is not None and _superseded(r, plain, lineage, supplied, sources):
+        return "superseded"
+    fail("E_VALUE_MISMATCH", "the recomputed value differs from the receipt's", "$.value")
 
 
 def check_blob_content(r: Dict[str, Any], content: bytes) -> None:
@@ -158,7 +251,8 @@ def _check_recompute_arg(recompute: Any) -> None:
     if recompute is None:
         return
     if not isinstance(recompute, Mapping):
-        raise TypeError("recompute must be a mapping with optional 'descriptor', 'inputs' and 'value'")
+        raise TypeError("recompute must be a mapping with optional 'descriptor', 'inputs', 'manifests', 'lineage' "
+                        "and 'value'")
     if "value" in recompute:
         v = recompute["value"]
         if not isinstance(v, Mapping) or "type" not in v or "value" not in v:
@@ -167,6 +261,12 @@ def _check_recompute_arg(recompute: Any) -> None:
     inputs = recompute.get("inputs")
     if inputs is not None and not isinstance(inputs, Mapping):
         raise TypeError("recompute['inputs'] must be a mapping of receipt hash to receipt JSON text")
+    manifests = recompute.get("manifests")
+    if manifests is not None and not isinstance(manifests, Mapping):
+        raise TypeError("recompute['manifests'] must be a mapping of slice entry to manifest JSON text")
+    lineage = recompute.get("lineage")
+    if lineage is not None and (not isinstance(lineage, (list, tuple)) or not all(isinstance(e, str) for e in lineage)):
+        raise TypeError("recompute['lineage'] must be a list of inputs entries (strings): what the evaluation read")
 
 
 def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = None,
@@ -178,7 +278,15 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
     :class:`KeysResult`, a ``{key id: public key hex}`` mapping (any host, no
     validity windows), or a list of those; the first source that covers the
     ``computed_by`` host is used. ``recompute`` (optional) enables step 7:
-    ``{"descriptor": ..., "inputs": {hash: receipt text}, "value": {"type", "value"}}``.
+    ``{"descriptor": ..., "inputs": {hash: receipt text}, "manifests": {entry: manifest text},
+    "lineage": [entry, ...], "value": {"type", "value"}}``. ``inputs`` holds the input
+    receipts, slice members included; ``manifests`` (spec-0.4.0) the manifest
+    ``{"members", "slice"}`` for each slice entry ``slice:<slice id>:<members hash>``
+    of ``inputs`` (missing: E_INPUT_UNAVAILABLE). Receipts and manifests are JSON
+    text or bytes (parsed strictly) or parsed values. ``lineage`` (optional,
+    spec-0.4.0) is the list of ``inputs`` entries the evaluation read, with their
+    receipts in ``inputs``; when the value differs it decides between
+    E_INPUT_SUPERSEDED and E_VALUE_MISMATCH (SPEC 10.1 step 7.6).
     ``descriptor`` is the descriptor obtained for ``cell.fn_hash``: a parsed JSON
     value, or JSON text/bytes (parsed strictly); leave it out when none was
     obtained (E_FN_UNAVAILABLE). Any other value, ``None`` (JSON null)
@@ -186,13 +294,17 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
     (E_FN_HASH_MISMATCH). ``value`` is what evaluating the function gave; leave
     it out when the function could not be evaluated: once steps 7.1-7.5 pass,
     the result is then ok at level ``signed`` with ``code`` ``"E_EVAL_UNAVAILABLE"``
-    and ``path`` ``"$.value"`` (SPEC 10.1 step 7.6).
+    and ``path`` ``"$.value"`` (SPEC 10.1 step 7.6). When ``value`` differs from the
+    receipt's and ``lineage`` shows an input replaced (a receipt of the same cell
+    with a later ``tx``, signature-valid, or the same slice id with another members
+    hash), the result is ok at level ``signed`` with ``code``
+    ``"E_INPUT_SUPERSEDED"`` and ``path`` ``"$.inputs"``.
     ``blob`` (optional): the content bytes of a blob value. Step 7.7 then runs
     last (after step 7 if ``recompute`` is given, else directly after step 6):
     the receipt's ``type`` must be ``blob`` (E_SCHEMA otherwise) and the content
     must have the blob's length and SHA-256 (E_BLOB_MISMATCH). The level stays
     ``signed`` or ``recomputed``; ``blob_checked`` reports that 7.7 passed. 7.7
-    also runs after E_EVAL_UNAVAILABLE: if it passes the code is kept, if it
+    also runs after E_EVAL_UNAVAILABLE and E_INPUT_SUPERSEDED: if it passes the code is kept, if it
     fails its failure is reported instead.
 
     Never raises for an invalid receipt or bad key material: the outcome is in
@@ -211,8 +323,13 @@ def verify(receipt: Any, keys: Any, recompute: Optional[Mapping[str, Any]] = Non
         level, detail = "signed", "signature-valid"
         code, path = "OK", None
         if recompute is not None:
-            if _recompute(r, recompute, sources):
+            outcome = _recompute(r, recompute, sources)
+            if outcome == "recomputed":
                 level, detail = "recomputed", "fully verified by recomputation"
+            elif outcome == "superseded":
+                code, path = "E_INPUT_SUPERSEDED", "$.inputs"
+                detail = ("signature-valid and historical: the recomputed value differs, and the evaluation read a "
+                          "later version of an input cell, or other members of an input slice")
             else:
                 code, path = "E_EVAL_UNAVAILABLE", "$.value"
                 detail = ("signature-valid; recomputation checks 7.1-7.5 passed, but the function was not "

@@ -131,6 +131,13 @@ def code(r: Any, rc: Any = None, keys: Any = None) -> Tuple[bool, str, Optional[
 # ---------------------------------------------------------------- step 3
 
 
+def signed_only() -> Dict[str, Any]:
+    """The receipt of receipt/slice-signed-only, to be signed again with this module's key."""
+    r: Dict[str, Any] = json.loads(vector("receipt/slice-signed-only")["input"])
+    r["computed_by"] = f"mesh.example.net#{KID}"
+    return r
+
+
 class InputEntryFormTest(unittest.TestCase):
     """Step 3: an entry is 64 lowercase hex digits or slice:<64>:<64> (135 characters), else E_CANON_HEX."""
 
@@ -149,13 +156,13 @@ class InputEntryFormTest(unittest.TestCase):
                     f"slice:{h}:{h}:", f"slice:{h}{h}", f"slice:{h};{h}", f"slices:{h}:{h}", f"slice::{h}{h}",
                     f"{h}:{h}", "slice:", " " + good, good + "0", h[:-1], h.upper()):
             with self.subTest(bad):
-                r = sign(dict(json.loads(vector("receipt/slice-signed-only")["input"]), inputs=[bad]))
+                r = sign(dict(signed_only(), inputs=[bad]))
                 ok, c, _, path = code(r)
                 self.assertEqual((ok, c, path), (False, "E_CANON_HEX", "$.inputs[0]"))
 
     def test_order_and_uniqueness(self) -> None:
         h, s = "f" * 64, f"slice:{'0' * 64}:{'0' * 64}"
-        base = json.loads(vector("receipt/slice-signed-only")["input"])
+        base = signed_only()
         # receipt hashes sort before slice entries ("f" < "s"): string order, as for any entry
         self.assertEqual(code(sign(dict(base, inputs=[h, s]))), (True, "OK", "signed", None))
         self.assertEqual(code(sign(dict(base, inputs=[s, h])))[1], "E_CANON_SET")
@@ -165,7 +172,7 @@ class InputEntryFormTest(unittest.TestCase):
         self.assertEqual(code(sign(dict(base, inputs=[s2, s])))[1], "E_CANON_SET")
 
     def test_one_entry_each_for_the_limit(self) -> None:
-        base = json.loads(vector("receipt/slice-signed-only")["input"])
+        base = signed_only()
         entries = sorted(f"slice:{i:064x}:{'0' * 64}" for i in range(4096))
         self.assertTrue(code(sign(dict(base, inputs=entries)))[0])
         more = sorted(entries + [f"slice:{4096:064x}:{'0' * 64}"])

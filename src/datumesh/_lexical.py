@@ -9,6 +9,7 @@ licences); characters, NFC, then length (strings, SPEC 3.5).
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any, Optional, Tuple
 
 from ._errors import fail
@@ -28,6 +29,8 @@ LIMIT_INPUTS = 4096
 LIMIT_LICENCE_SPDX = 64
 LIMIT_LICENCE_URL = 512
 LIMIT_KEYS = 64
+LIMIT_EXTENT = 4096  # values in an argument's extent (spec-0.4.0)
+LIMIT_MEMBERS = 1048576  # member receipt hashes in a slice manifest (spec-0.4.0)
 LIMIT_DNS = 253
 LIMIT_BLOB_LENGTH = 2 ** 53 - 1
 LIMIT_MEDIA_TYPE = 128
@@ -41,6 +44,8 @@ _INSTANT = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):(
 _HEX16 = re.compile(r"[0-9a-f]{16}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _HEX128 = re.compile(r"[0-9a-f]{128}")
+_INPUT_ENTRY = re.compile(r"[0-9a-f]{64}|slice:[0-9a-f]{64}:[0-9a-f]{64}")
+SLICE_PREFIX = "slice:"
 _SPDX = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 _URL_REST = re.compile(r"[!-~]+")
 _RESTRICTED_NAME = r"[a-z0-9][a-z0-9!#$&^_.+-]*"
@@ -184,6 +189,26 @@ def check_hex(s: str, digits: int, path: Optional[str]) -> None:
     pattern = {16: _HEX16, 64: _HEX64, 128: _HEX128}[digits]
     if not pattern.fullmatch(s):
         fail("E_CANON_HEX", f"expected {digits} lowercase hex digits", path)
+
+
+def check_input_entry(s: str, path: Optional[str]) -> None:
+    """An ``inputs`` entry (SPEC 10.1 step 3, 8.1): a receipt hash, or since spec-0.4.0 a slice entry
+    ``slice:<64 hex>:<64 hex>`` (135 characters). Anything else is E_CANON_HEX."""
+    if not _INPUT_ENTRY.fullmatch(s):
+        fail("E_CANON_HEX", "expected a receipt hash (64 lowercase hex digits) or a slice entry "
+             "slice:<64 lowercase hex>:<64 lowercase hex>", path)
+
+
+def is_slice_entry(s: str) -> bool:
+    return s.startswith(SLICE_PREFIX)
+
+
+def order_key(type_: str, s: str) -> Any:
+    """The order of a type's canonical lexical values (SPEC 7, 15.13): numbers numerically, dates and
+    instants chronologically (their canonical forms compare as strings, 3.2-3.3), strings by code point."""
+    if type_ == "number":
+        return Decimal(s)
+    return s
 
 
 def check_licence(s: str, path: Optional[str]) -> None:

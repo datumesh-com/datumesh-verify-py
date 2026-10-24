@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, NoReturn, Optional, Tuple, Union
 
 from . import _lexical as lx
 from . import _units
-from ._errors import ERROR_CODES, DatumeshError, fail
+from ._errors import ERROR_CODES, FAULT_CODES, DatumeshError, fail
 from ._json import jcs_bytes, number_texts, parse_json
 from ._keys import key_sources
 from ._verify import _signed
@@ -18,7 +18,7 @@ from ._verify import _signed
 OUTCOMES: Dict[str, Tuple[range, Tuple[str, ...], Tuple[str, ...]]] = {
     "ok": (range(200, 201), ("receipt", "trust"), ("superseded_by", "reason")),
     "stale": (range(200, 201), ("receipt", "trust", "age_seconds"), ("superseded_by", "reason")),
-    "not_covered": (range(404, 405), (), ()),
+    "not_covered": (range(404, 405), (), ("fault",)),
     "unlicensed": (range(403, 404), (), ()),
     "payment_required": (range(402, 403), ("quote",), ()),
     "rate_limited": (range(429, 430), ("retry_after_seconds",), ()),
@@ -47,7 +47,10 @@ class EnvelopeResult:
     ``receipt_hash`` are the trust label and the receipt hash when the envelope carries
     a receipt (else None). When not ok, all three are None. ``detail``: human-readable
     text. ``path``: where the failure is (``status``, or a JSON path such as
-    ``$.receipt.sig``), or None.
+    ``$.receipt.sig``), or None. ``fault`` (spec-0.4.0): for a ``not_covered``
+    envelope, the formula evaluation fault it carries (one of ``FAULT_CODES``): the
+    cell is computed and its evaluation faulted, so it has no value, which is not
+    missing data; else None.
     """
 
     ok: bool
@@ -57,6 +60,7 @@ class EnvelopeResult:
     receipt_hash: Optional[str]
     detail: str
     path: Optional[str]
+    fault: Optional[str] = None
 
 
 def _bad(detail: str, path: str) -> NoReturn:
@@ -122,6 +126,9 @@ def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
             if not isinstance(v, str) or v not in allowed_codes:
                 _bad("bad_request carries a code parse can raise (SPEC 5.4)" if outcome == "bad_request"
                      else "error is a code from SPEC 10.2 other than E_ENVELOPE", p)
+        elif name == "fault":
+            if not isinstance(v, str) or v not in FAULT_CODES:
+                _bad(f"fault is a formula evaluation fault: one of {', '.join(FAULT_CODES)}", p)
         elif name == "quote":
             _quote(v, p)
         elif name == "reason":
@@ -187,6 +194,8 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
     ``asof`` at or before it, for ``ok`` and ``stale`` alike (``E_ENVELOPE``); then ``trust`` is checked against the receipt (``primary``
     exactly when the signer's host is the namespace's host and there are no
     inputs) and ``superseded_by`` must not be the receipt's own hash (``E_ENVELOPE``).
+    A ``not_covered`` envelope may carry ``fault``, a formula evaluation fault
+    (spec-0.4.0), exposed as ``EnvelopeResult.fault``.
 
     Never raises for an invalid envelope; raises TypeError for a body that is not
     text or bytes, keys of an unsupported type or a request that is not a mapping,
@@ -225,7 +234,8 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
                      "inputs", "$.trust")
             if env.get("superseded_by") == h:
                 _bad("superseded_by is the receipt's own hash", "$.superseded_by")
+        fault = env.get("fault")
         return EnvelopeResult(True, "OK", outcome, trust, h, "well-formed envelope" + (
-            "; receipt signature-valid" if h else ""), None)
+            "; receipt signature-valid" if h else "") + (f"; evaluation fault {fault}" if fault else ""), None, fault)
     except DatumeshError as e:
         return EnvelopeResult(False, e.code, None, None, None, e.detail, e.path)

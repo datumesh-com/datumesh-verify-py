@@ -25,7 +25,9 @@ class ConformanceTest(unittest.TestCase):
         self.assertEqual(counts["envelope"], 63, counts)
         self.assertEqual(counts["slice"], 18, counts)
         self.assertEqual(counts["function"], 48 + 16, counts)
-        self.assertEqual(len([v for v in vectors_of("receipt") if "slice" in v["id"]]), 30, counts)
+        # 30 slice-lineage receipt vectors (13 valid, 17 invalid); invalid/receipt-slice is from spec-0.1
+        lineage = [v for v in vectors_of("receipt") if v["id"].startswith(("receipt/slice-", "invalid/receipt-slice-"))]
+        self.assertEqual((len(lineage), sum(v["valid"] for v in lineage)), (30, 13), counts)
         # every kind is one the runner knows (or skips)
         for v in load_vectors():
             self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",
