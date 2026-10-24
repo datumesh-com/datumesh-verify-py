@@ -147,7 +147,7 @@ class ConformanceTest(unittest.TestCase):
         for v in vectors_of("slice"):
             with self.subTest(v["id"]):
                 obj = json.loads(v["input"])
-                kind = "manifest" if isinstance(obj, dict) and ("members" in obj or "slice" in obj) else "slice"
+                kind = "manifest" if isinstance(obj, dict) and "members" in obj else "slice"
                 if v["valid"]:
                     self.assertEqual(datumesh.canonicalize(v["input"], kind).decode(), v["canonical"])
                     if kind == "manifest":

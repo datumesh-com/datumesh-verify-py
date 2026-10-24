@@ -609,8 +609,8 @@ class SliceRecomputeTest(unittest.TestCase):
 
     def test_recompute_argument_types(self) -> None:
         r, rc = world()
-        for bad in (dict(rc, manifests=[1]), dict(rc, lineage="x"), dict(rc, lineage=[1]),
-                    dict(rc, lineage={"a": 1})):
+        # lineage must be a list or tuple; its items are not validated (10.1 step 7.6, 18be70f)
+        for bad in (dict(rc, manifests=[1]), dict(rc, lineage="x"), dict(rc, lineage={"a": 1})):
             with self.subTest(bad), self.assertRaises(TypeError):
                 verify(json.dumps(r), KEYS, bad)
 
@@ -684,6 +684,32 @@ class SupersededTest(unittest.TestCase):
         # another slice id with the same members hash is not a replacement
         m3 = manifest([kew], with_args(date="*"))
         self.assertEqual(code(r, dict(rc, value={"type": "number", "value": "11"}, lineage=[entry_of(m3)]))[1],
+                         "E_VALUE_MISMATCH")
+
+    def test_lineage_rules_of_18be70f(self) -> None:
+        """10.1 step 7.6 as settled at 18be70f: e is replaced only when the lineage does not list e; a slice
+        replacement is any string beginning slice:<e's slice id>:; a non-string item replaces nothing; the
+        lineage is a set."""
+        r, rc, old, new = self._plain_world()
+        # the lineage lists e itself as well as a later version of its cell: not replaced
+        self.assertEqual(code(r, dict(rc, lineage=[r["inputs"][0], rhash(new)]))[1], "E_VALUE_MISMATCH")
+        self.assertEqual(code(r, dict(rc, lineage=[rhash(new), r["inputs"][0]]))[1], "E_VALUE_MISMATCH")
+        # non-string items replace nothing, and do not stop the check
+        self.assertEqual(code(r, dict(rc, lineage=[1, None, {"x": 1}, rhash(new)])),
+                         (True, "E_INPUT_SUPERSEDED", "signed", "$.inputs"))
+        self.assertEqual(code(r, dict(rc, lineage=[1, None]))[1], "E_VALUE_MISMATCH")
+        kew = stored("2026-03-01", "kew", "10", T1)
+        r2, rc2 = world([kew], value="10", tx=T1)
+        e = r2["inputs"][0]
+        sid = e.split(":")[1]
+        v11 = {"type": "number", "value": "11"}
+        for n, want in ((f"slice:{sid}:", "E_INPUT_SUPERSEDED"), (f"slice:{sid}:x:y", "E_INPUT_SUPERSEDED"),
+                        (f"slice:{sid}:{'0' * 64}", "E_INPUT_SUPERSEDED"), (f"slice:{sid}", "E_VALUE_MISMATCH"),
+                        (f"Slice:{sid}:{'0' * 64}", "E_VALUE_MISMATCH")):
+            with self.subTest(n):
+                self.assertEqual(code(r2, dict(rc2, value=v11, lineage=[n]))[1], want)
+        # e listed too: not replaced
+        self.assertEqual(code(r2, dict(rc2, value=v11, lineage=[e, f"slice:{sid}:{'0' * 64}"]))[1],
                          "E_VALUE_MISMATCH")
 
     def test_blob_after_superseded(self) -> None:
