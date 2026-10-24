@@ -1,8 +1,9 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Four sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.3.0` (what that revision
-resolves, and DEF-40 to DEF-41), then `spec-0.2.1` (status of every entry at that revision, and
-DEF-39), then `spec-0.2.0` (DEF-23 to DEF-38). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
+Five sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.0` (what that revision
+resolves, and DEF-42 to DEF-47), then `spec-0.3.0` (what that revision resolves, and DEF-40 to
+DEF-41), then `spec-0.2.1` (status of every entry at that revision, and DEF-39), then `spec-0.2.0`
+(DEF-23 to DEF-38). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
 `spec-0.2.0` section says so.
 
 # spec-0.1.1
@@ -385,6 +386,157 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 - Vector `canonical` strings may contain U+2028 (`jcs/escapes`), which some JSON-lines tooling
   treats as a line break; the conformance runner here escapes all non-ASCII output for that
   reason. Worth a sentence in 11 for harness authors.
+
+# spec-0.4.0
+
+Spec commit `dedd132` (the `spec-0.4.0` draft; the tag is to be put on it, or on a later commit).
+This library is 0.4.0 and conforms: of the 978 vectors, the 432 for verifier libraries pass, through
+the API and through `tools/run_vectors.py`; the 546 of kinds `formula`, `formula-eval`, `excel` and
+`decimal` are for formula evaluators and are skipped (this library evaluates no function).
+`tests/test_spec_0_4_0.py` tests each change through the API. Implemented from SPEC.md, units.md,
+the schemas and the vectors; `tools/canon.py` was run as a black box only (`check` over probe
+vectors, and `tools/oracle_fuzz.py`, 12,000 mutated vectors over three seeds, one with this library on Python 3.10, with no disagreement after DEF-42), and
+none of `tools/*.py`, `tests/*`, `crosscheck/*` (except its README) or `DESIGN-0.4.0.md` was read.
+
+| Entry | Status at dedd132 |
+|---|---|
+| DEF-40 | Resolved (10.1 step 7.1), with the wording proposed here: "An implementation whose interface also takes text in place of a parsed value says which it takes; text is then the obtained bytes." This library takes both: a `str` or `bytes` descriptor is JSON text, as before; so are manifests and member receipts. Closed. |
+| DEF-41 | Resolved (10.1 step 7.6), with the wording proposed here: "A verifier that does not attempt step 7 reports no code." No change. Closed. |
+| DEF-34 | Open again for `spec-0.4.0`: the tag does not exist yet. README and the packaging test name `spec-0.4.0`; the packaging test pins commit `dedd132`. That commit is not yet on `github.com/datumesh-com/datumesh-spec` either (it was fetched from `/root/datumesh-spec`), so a fresh clone with `--recurse-submodules`, and CI, cannot check the submodule out until it is pushed. |
+
+The changes of the revision, each implemented (SPEC 10.1, "What verifier libraries of `spec-0.4.0` must do"):
+
+- **Step 3.** An `inputs` entry is a receipt hash or a slice entry `slice:<64 hex>:<64 hex>`;
+  anything else `E_CANON_HEX` at `$.inputs[i]`; string order and uniqueness as before (receipt
+  hashes sort before slice entries); one entry each for the 4,096 limit. Single-cell receipts are
+  checked exactly as before.
+- **Descriptors (7).** `signature.order` (array of strings, else `E_SCHEMA`; every argument once,
+  else `E_CANON_SET`, checked after the arguments and before `returns`) and argument `extent`
+  (array of strings or `{"hi", "lo"}` of strings, else `E_SCHEMA`; after `valid`: booleans and blobs
+  `E_CANON_TYPE`; ranges only for dates and numbers, `E_CANON_TYPE`; values in their type's lexical
+  form with that type's code, integer number range ends `E_CANON_NUMBER`; ascending in the type's
+  order `E_CANON_SET`; at most 4096 `E_CANON_LIMIT`, after the order). The formula codes are not
+  checked (DEF-46).
+- **Slice objects and manifests (4.4, 15.13).** `canonicalize(obj, "slice")` and
+  `canonicalize(obj, "manifest")` (never inferred), `slice_id`, `members_hash`, `slice_entry`.
+- **Step 7.5.** Each slice entry in its place: the manifest from `recompute["manifests"]`
+  (`E_INPUT_UNAVAILABLE` if none), parsed strictly, structure, canonical form, then its slice id and
+  members hash (`E_INPUT_UNAVAILABLE`); the slice's function declared (`E_INPUT_UNDECLARED`); each
+  member obtained, signature-valid, hashed, a member of the slice and not a second version of a
+  cell already seen (`E_SLICE_MEMBER`), `asof` at or before the receipt's. `tx` is the latest of
+  every input receipt's and member's `tx`; with none (only empty slices, or no inputs), no rule.
+- **Step 7.6.** `E_INPUT_SUPERSEDED`, success at level `signed`, path `$.inputs`, when the value
+  differs and `recompute["lineage"]` replaces an input (DEF-45). Step 7.7 runs after it.
+- **Envelopes (5.5).** `not_covered` may carry `fault`, one of the six evaluation faults
+  (`FAULT_CODES`), exposed as `EnvelopeResult.fault`; on any other outcome, or any other value,
+  `E_ENVELOPE`. `error` may now carry `E_SLICE_MEMBER` and `E_INPUT_SUPERSEDED` (they are in 10.2).
+- **Units, limits, codes.** `min h d km deg` (the embedded list regenerated); `extent` 4096,
+  `members` 1048576; `E_SLICE_MEMBER` after `E_INPUT_UNDECLARED`, `E_INPUT_SUPERSEDED` after
+  `E_EVAL_UNAVAILABLE` in `ERROR_CODES`; `SUCCESS_CODES`.
+
+## DEF-42. 4.4: where a version slice's "cell without markers" is checked
+
+**Problem.** 4.4 writes a version slice as `{"cell": <cell without markers>, "from", "to"}` and says
+a slice object "is checked in JCS order like a cell", and 10.2 lists `E_SLICE` at step 4 (after all
+canonical-form checks) for receipts. It does not say whether a marker in the version slice's cell
+is found with the cell (before `from` and `to`) or after the whole object, like a receipt's
+`E_SLICE`. `{"cell": <cell with "*">, "from": "bad", ...}` is `E_SLICE` one way and
+`E_CANON_INSTANT` the other. I first did the latter; `tools/oracle_fuzz.py` found the reference
+tool does the former.
+
+**Resolution.** The cell is checked whole in its place: its canonical form, then no marker
+(`E_SLICE`), then `from` and `to`. For a membership slice, "no open or ranged argument" (`E_SLICE`)
+comes after the whole object's canonical form (the reference tool agrees).
+
+**Proposed wording (4.4, after "checked in JCS order like a cell").** "A version slice's `cell` is
+checked in its place: its canonical form, then that it has no slice marker (`E_SLICE`), before
+`from` and `to`. A membership slice without an open or ranged argument is `E_SLICE` after the
+canonical form of the whole object."
+
+## DEF-43. 4.4: a range object's `type` comes after `hi` and `lo` in JCS order
+
+**Problem.** "A slice object is checked in JCS order like a cell", but in a range object
+`{"hi", "lo", "type"}` the ends come before `type` in JCS order, and the ends' lexical rules depend
+on `type`. For a typed scalar the question never arose (`type` < `value`).
+
+**Resolution.** `type` first (`E_CANON_TYPE` for one that is not `date`, `instant`, `number` or
+`string`), then `hi`, then `lo`, each by the lexical rules of that type. The reference tool agrees
+on the probes tried (an unknown type with bad ends is `E_CANON_TYPE`). The same order for an
+extent range (no `type` member there: the declaration's type is already checked).
+
+**Proposed wording (4.4).** "In a range object, `type` is checked first, then `hi` and `lo` by the
+lexical rules of that type."
+
+## DEF-44. 4.4: a version slice with `from` after `to`
+
+**Problem.** 4.4 says "a range with `lo` after `hi` is empty, not an error", but says nothing of a
+version slice's `[from, to]`.
+
+**Resolution.** Accepted as an empty interval: no version is a member (the reference tool also
+accepts it, and an empty manifest for it verifies).
+
+**Proposed wording (4.4).** "... is empty, not an error; so is a version slice with `from` after `to`."
+
+## DEF-45. 10.1 step 7.6: what counts as a replaced input for `E_INPUT_SUPERSEDED`
+
+**Problem.** 7.6 says the verifier "checks whether an entry of the receipt's `inputs` was replaced in
+that lineage by a receipt of the same cell with a later `tx` (signature-valid through step 6), or by
+an entry for the same slice id with another members hash". Several details are open:
+(a) whether "the same cell" includes `fn_hash` (a correction under a rebinding is a different cell
+by 4.4, but plausibly "the same cell" to a reader); (b) whether the replacing receipt must hash to
+its lineage entry, and be of a declared input function, and have an `asof` at or before the
+receipt's (it answers a later evaluation, so it may not); (c) whether a slice replacement needs its
+manifest ("with the receipts and manifests of those not listed" suggests it is offered, but the
+test is on the entry alone); (d) what a malformed lineage entry means; (e) "superseded at a `tx`
+earlier than the receipt's own" reads like a condition but is stated as an explanation.
+
+**Resolution.** (a) The same cell id: `ns`, `fn`, `fn_hash` and arguments. (b) The replacing
+receipt must be obtained from `recompute["inputs"]`, be signature-valid through step 6 and hash to
+its entry; nothing else is checked (not its `asof`, not its function). (c) No manifest is needed:
+an entry `slice:<id>:<other hash>` with the receipt's slice id is a replacement. (d) Entries are
+compared as given: a non-string is a `TypeError` (a caller's mistake), any string is taken as an
+entry, so a malformed string that starts `slice:<same id>:` counts as a replacement (the reference
+tool agrees). (e) Not checked. On every probe the reference tool agreed (replacement missing,
+invalid, with another hash, with an equal `tx`, with another `fn_hash`, with a later `asof`;
+slice replacements with and without manifest; an empty lineage).
+
+**Proposed wording (7.6).** "... replaced in that lineage: a receipt hash by another entry whose
+receipt is obtained, is signature-valid through step 6, hashes to that entry, and has the same cell
+id (4.4) with a later `tx`; a slice entry by another entry with the same slice id. Nothing else
+about the replacing entry is checked."
+
+## DEF-46. 7 / 15.6 / 10.2: formula descriptor rules in a verifier
+
+**Problem.** 7 says "Formula descriptors always carry it (`E_FORMULA_ORDER`)", and 15.6 makes a
+formula descriptor whose body is not the print of its AST, or whose `inputs` differ from the
+derived set, non-canonical (`E_FORMULA_NOT_CANONICAL`, `E_FORMULA_INPUTS`). But 10.2 says "The
+formula codes of section 15.11 are not verification codes", and 10.1 says a verifier needs no
+formula evaluator. Step 7.1 checks the descriptor "is canonical (sections 6-7, units included)":
+it is not said whether that includes these three rules for `lang = "formula"`.
+
+**Resolution.** Not checked: a formula descriptor without `order`, with a body that does not
+parse, or with other `inputs`, is canonical here if it meets sections 6-7 otherwise. The reference
+tool's `check` agrees (it accepts both a `formula` descriptor without `order` and one whose body is
+not a formula). `ERROR_CODES` has no formula code.
+
+**Proposed wording (7, after "Formula descriptors always carry it").** "That, and the rules of
+15.6, are checked by `define` and formula evaluators; a verifier's canonical-form check of a
+descriptor (10.1 step 7.1) does not include them."
+
+## DEF-47. 11: telling a slice object from a manifest in a `slice` vector
+
+**Problem.** The `slice` kind's input is "JSON text of a slice object (4.4) or a manifest (15.13)",
+and the outputs differ (`members_hash` and `entry` only for a manifest). An invalid input that is
+neither (`invalid/slice-schema`) must still be routed to one of the two checks, and 11 does not say
+how.
+
+**Resolution.** A manifest when the parsed input is an object with a `members` or `slice` member,
+otherwise a slice object. Every vector agrees.
+
+**Proposed wording (11, `slice` row).** "... or a manifest (15.13), which is an object with a
+`members` or `slice` member; anything else is checked as a slice object."
+
+---
 
 # spec-0.3.0
 

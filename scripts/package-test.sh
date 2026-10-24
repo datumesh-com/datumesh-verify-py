@@ -3,17 +3,17 @@
 #   1. build the sdist and the wheel in a clean python:3.13-slim container;
 #   2. install the wheel, with only its declared dependencies, into a FRESH python:3.10-slim container;
 #   3. run the README's Python example verbatim (extracted from README.md) in a checkout of the
-#      spec at tag spec-0.3.0 (the spec/ submodule stands in for the README's `git clone`, and the
+#      spec at tag spec-0.4.0 (the spec/ submodule stands in for the README's `git clone`, and the
 #      built wheel for `pip install datumesh`), and compare its output with the README's comment.
-#      The submodule must be at 3bac3d4, the commit the tag is to be put on (checked by commit:
+#      The submodule must be at dedd132, the commit the tag is to be put on (checked by commit:
 #      the tag does not exist yet, and CI checkouts do not fetch the submodule's tags).
 set -eu
 cd "$(dirname "$0")/.."
 [ -f spec/vectors/receipt/stored-number.json ] || { echo "spec submodule missing: git submodule update --init" >&2; exit 1; }
-SPEC_COMMIT=3bac3d4
+SPEC_COMMIT=dedd132
 case "$(git -C spec rev-parse HEAD)" in
   "$SPEC_COMMIT"*) ;;
-  *) echo "spec/ is not at spec-0.3.0 ($SPEC_COMMIT)" >&2; exit 1 ;;
+  *) echo "spec/ is not at spec-0.4.0 ($SPEC_COMMIT)" >&2; exit 1 ;;
 esac
 
 out="$(mktemp -d)"
@@ -28,7 +28,7 @@ docker run --rm -v "$PWD":/src:ro -v "$out/dist":/dist python:3.13-slim sh -c '
   pip install -q --disable-pip-version-check --root-user-action=ignore build
   python -m build --outdir /dist >/dev/null
   ls -l /dist
-  python -m zipfile -l /dist/datumesh-0.3.0-py3-none-any.whl
+  python -m zipfile -l /dist/datumesh-0.4.0-py3-none-any.whl
 '
 
 echo "--- extract the README example"
@@ -40,7 +40,7 @@ expected="$(sed -n 's/^print(.*)  # //p' "$out/readme_example.py")"
 echo "--- install the wheel in a fresh python:3.10-slim and run the example"
 got="$(docker run --rm -v "$out":/pkg:ro -v "$PWD/spec":/spec:ro python:3.10-slim sh -c '
   set -e
-  pip install -q --disable-pip-version-check --root-user-action=ignore /pkg/dist/datumesh-0.3.0-py3-none-any.whl >&2
+  pip install -q --disable-pip-version-check --root-user-action=ignore /pkg/dist/datumesh-0.4.0-py3-none-any.whl >&2
   pip list --format=freeze >&2
   python - >&2 <<PY
 import importlib.metadata as md
