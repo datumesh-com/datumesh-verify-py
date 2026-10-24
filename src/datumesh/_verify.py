@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from nacl.exceptions import CryptoError
 from nacl.signing import VerifyKey
@@ -127,7 +127,7 @@ def _superseded(r: Dict[str, Any], plain: Dict[str, Dict[str, Any]], lineage: An
     id with another members hash."""
     entries = [e for e in lineage if e not in set(r["inputs"])]
     slice_entries = {e.split(":")[1] for e in entries if lx.is_slice_entry(e) and e.count(":") == 2}
-    candidates: Optional[list] = None
+    candidates: Optional[List[Dict[str, Any]]] = None
     for e in r["inputs"]:
         if lx.is_slice_entry(e):
             if e.split(":")[1] in slice_entries:
