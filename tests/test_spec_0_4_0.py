@@ -367,6 +367,14 @@ class SliceObjectTest(unittest.TestCase):
         obj = dict(with_args(date={"hi": "x", "lo": "x", "type": "date"}), fn="Temp")
         self.assertEqual(scode(obj), "E_CANON_DATE")
         self.assertEqual(scode(dict(CELL, ns="Bad")), "E_CANON_NAME")
+        # A version slice's cell is "a cell without markers" (4.4), checked whole in its place: its canonical
+        # form, then E_SLICE, both before from and to (the reference tool agrees; DEFECTS.md DEF-42).
+        star = with_args(station="*")
+        self.assertEqual(scode({"cell": star, "from": "bad", "to": "bad"}), "E_SLICE")
+        self.assertEqual(scode({"cell": dict(star, ns="Bad"), "from": "bad", "to": "bad"}), "E_CANON_NAME")
+        self.assertEqual(scode({"members": [], "slice": {"cell": star, "from": "bad", "to": T1}}, "manifest"), "E_SLICE")
+        # A membership slice without an open or ranged argument: E_SLICE after its whole canonical form.
+        self.assertEqual(scode(dict(CELL, fn_hash="x")), "E_CANON_HEX")
 
 
 class ManifestTest(unittest.TestCase):

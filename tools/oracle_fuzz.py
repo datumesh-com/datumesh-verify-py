@@ -39,6 +39,8 @@ N = int(sys.argv[2])
 OUT = "/work/vectors/probe"
 os.makedirs(OUT, exist_ok=True)
 vectors = [json.load(open(f)) for f in sorted(glob.glob("/repo/spec/vectors/*/*.json"))]
+# The formula evaluator kinds (spec-0.4.0) are not run by a verifier library.
+vectors = [v for v in vectors if v["kind"] not in ("formula", "formula-eval", "excel", "decimal")]
 
 POOL = ["", "*", "X", "a" * 65, "a" * 64, "1.50", "-0", "0", "1", "true", "2024-02-30", "2024-03-15",
         "2024-03-15T16:00:00.000000Z", "2024-03-16T09:00:00.000000Z", "2099-01-01T00:00:00.000000Z",
@@ -58,6 +60,11 @@ POOL += ["EUR", "USD", "usd", "GRD", "XXX", "degC", "°C", "kWh", "m/s", "1", "p
          "9dc30a40021f1f79d8dd9437ec9014ce134138326b72fcb9696485ab3d69330a:17:text/Plain",
          "ok", "stale", "not_covered", "unlicensed", "payment_required", "rate_limited", "error",
          "primary", "verified", "unverified", "E_SIGNATURE", "E_TEAPOT", "0.05", "https://mesh.example/pay"]
+# spec-0.4.0: slice entries, ranges, order and extent, faults, new units
+POOL += ["slice:" + "0" * 64 + ":" + "0" * 64, "slice:" + "f" * 64 + ":" + "A" * 64, "slice:" + "0" * 64,
+         "2026-03-01", "2026-03-05", "2026-03-01T09:55:00.000000Z", "-1", "10", "2.5", "min", "h", "d", "km",
+         "deg", "E_FORMULA_DIV_ZERO", "E_FORMULA_BUDGET", "E_SLICE_MEMBER", "E_INPUT_SUPERSEDED", "formula",
+         "weather.example.org", "temp", "station", "kew"]
 OBJ_POOL = [{"arg": "base"}, {"arg": "quote"}, {"arg": "date"}, {"arg": "zz"}, {"of": "USD", "per": "EUR"},
             {"of": {"arg": "quote"}, "per": {"arg": "base"}}, {"of": "kg", "per": "EUR"},
             {"type": "number", "unit": "EUR"}, {"type": "number"}, {"type": "boolean"},
@@ -139,7 +146,7 @@ def resign(r, seed):
 def emit(i, v):
     v = dict(v, id="probe/f%05d" % i, valid=False, error="E_PROBE", description="fuzz")
     for k in ("canonical", "sha256", "object", "https", "key_id", "key_ids", "sig", "level", "unit", "outcome",
-              "trust", "receipt_hash"):
+              "trust", "receipt_hash", "code", "blob_checked", "slice_id", "members_hash", "entry"):
         v.pop(k, None)
     json.dump(v, open(os.path.join(OUT, "f%05d.json" % i), "w"))
 
@@ -154,6 +161,9 @@ def resign_any(r):
         if seed:
             return resign(r, seed)
     return r
+
+def rc_slices(rc):
+    return bool(rc.get("manifests")) or "lineage" in rc
 
 def fn_hash(d):
     import hashlib
@@ -197,6 +207,28 @@ while i < N:
                 else:
                     b = b[:-1] if rnd.random() < 0.5 else b + b"x"
                 v["blob_hex"] = b.hex()
+            elif target < 0.8 and "recompute" in v and rc_slices(v["recompute"]):
+                # spec-0.4.0: manifests, members and lineage
+                rc = v["recompute"]
+                t = rnd.random()
+                if t < 0.4 and rc.get("manifests"):
+                    e = rnd.choice(sorted(rc["manifests"]))
+                    rc["manifests"][e] = json.dumps(mutate(json.loads(rc["manifests"][e])))
+                elif t < 0.5 and rc.get("manifests"):
+                    rc["manifests"].pop(rnd.choice(sorted(rc["manifests"])))
+                elif t < 0.7 and rc.get("inputs"):
+                    h = rnd.choice(sorted(rc["inputs"]))
+                    if rnd.random() < 0.3:
+                        rc["inputs"].pop(h)
+                    else:
+                        rc["inputs"][h] = json.dumps(resign_any(mutate(json.loads(rc["inputs"][h]))))
+                elif t < 0.85:
+                    r0 = json.loads(v["input"])
+                    rc["lineage"] = mutate(list(rc.get("lineage") or r0["inputs"]))
+                    if not isinstance(rc["lineage"], list) or not all(isinstance(x, str) for x in rc["lineage"]):
+                        continue
+                else:
+                    rc["value"] = {"type": "number", "value": rnd.choice(["1", "57", "68", "121", "x"])}
             elif target < 0.8 and "recompute" in v:
                 rc = v["recompute"]
                 if rc.get("descriptor") is not None and rnd.random() < 0.5:
