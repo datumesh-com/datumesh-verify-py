@@ -1,11 +1,13 @@
 """datumesh: verify Datumesh receipts (signed answers for addressable data cells).
 
-Implements the Datumesh protocol specification, revision ``spec-0.4.0``
+Implements the Datumesh protocol specification, revision ``spec-0.4.1``
 (https://github.com/datumesh-com/datumesh-spec), as a verifier library: RFC 8785
 canonical JSON, SHA-256 hashes, Ed25519 receipt signatures, blob content, units,
 cell URIs, response envelopes, key documents, and slice-as-lineage (slice entries,
-slice objects and manifests). It evaluates no function, formulas included: the
-evaluated value comes from the caller. Only :func:`fetch_keys` touches the network.
+slice objects and manifests), and, separately from verification, cross-mesh
+resolution of a host's mesh document (:func:`resolve_mesh`). It evaluates no
+function, formulas included: the evaluated value comes from the caller. Only
+:func:`fetch_keys` touches the network.
 """
 
 from __future__ import annotations
@@ -18,12 +20,13 @@ from ._envelope import EnvelopeResult, check_envelope
 from ._errors import ERROR_CODES, FAULT_CODES, SUCCESS_CODES, DatumeshError, fail
 from ._json import jcs_bytes
 from ._keys import Key, KeysResult, fetch_keys, key_id, keys_from_response
+from ._mesh import MESH_ENDPOINTS, MESH_WELL_KNOWN_PATH, MeshResult, resolve_mesh
 from ._uri import format_uri, parse_uri, uri_to_https
 from ._verify import VerifyResult, load, payload_bytes, verify
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 #: The specification revision this package conforms to.
-SPEC_VERSION = "spec-0.4.0"
+SPEC_VERSION = "spec-0.4.1"
 #: Every literal unit listed in units.md (index units, ``index:<period>=<value>``, are a pattern and not listed).
 UNITS = tuple(sorted(_units.LITERALS))
 #: The currency codes of units.md 2.1.
@@ -43,6 +46,9 @@ __all__ = [
     "EnvelopeResult",
     "Key",
     "KeysResult",
+    "MESH_ENDPOINTS",
+    "MESH_WELL_KNOWN_PATH",
+    "MeshResult",
     "SUCCESS_CODES",
     "UNITS",
     "VerifyResult",
@@ -60,6 +66,7 @@ __all__ = [
     "parse_uri",
     "receipt_hash",
     "receipt_payload",
+    "resolve_mesh",
     "resolved_unit",
     "slice_entry",
     "slice_id",

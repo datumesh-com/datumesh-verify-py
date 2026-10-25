@@ -24,15 +24,20 @@ OUTCOMES: Dict[str, Tuple[range, Tuple[str, ...], Tuple[str, ...]]] = {
     "rate_limited": (range(429, 430), ("retry_after_seconds",), ()),
     "bad_request": (range(400, 401), ("error",), ()),
     "error": (range(500, 600), ("error",), ()),
+    "pending": (range(202, 203), ("estimate_seconds", "job", "poll", "request"), ()),  # spec-0.4.1
 }
 #: Codes a bad_request may carry: the codes parse can raise (SPEC 5.4, 5.5).
 BAD_REQUEST_CODES = frozenset((
     "E_PARSE_URI", "E_CANON_NAME", "E_CANON_ARG_NAME", "E_CANON_ARG_DUPLICATE", "E_CANON_ARG_ORDER",
     "E_CANON_PERCENT", "E_CANON_TYPE", "E_CANON_NUMBER", "E_CANON_DATE", "E_CANON_INSTANT", "E_CANON_STRING",
     "E_CANON_BLOB", "E_CANON_LIMIT", "E_ARG_UNKNOWN", "E_ARG_MISSING"))
-#: Codes an error may carry: every code of SPEC 10.2 but E_ENVELOPE, which is a client's.
-ERROR_OUTCOME_CODES = frozenset(c for c in ERROR_CODES if c != "E_ENVELOPE")
+#: Codes an error may carry: every code of SPEC 10.2 but E_ENVELOPE, which is a client's, and E_JOB_UNKNOWN
+#: (spec-0.4.1), which is a bad_request's at a job URL.
+ERROR_OUTCOME_CODES = frozenset(c for c in ERROR_CODES if c not in ("E_ENVELOPE", "E_JOB_UNKNOWN"))
 _INTEGER = re.compile(r"0|[1-9][0-9]*")
+JOB = re.compile(r"[0-9a-f]{32,64}")
+_URL_REST = re.compile(r"[!-~]+")
+LIMIT_POLL = 512
 TRUST = ("primary", "verified", "unverified")
 MAX_SECONDS = 2 ** 53 - 1
 
@@ -50,7 +55,9 @@ class EnvelopeResult:
     ``$.receipt.sig``), or None. ``fault`` (spec-0.4.0): for a ``not_covered``
     envelope, the formula evaluation fault it carries (one of ``FAULT_CODES``): the
     cell is computed and its evaluation faulted, so it has no value, which is not
-    missing data; else None.
+    missing data; else None. ``job``, ``estimate_seconds`` and ``poll`` (spec-0.4.1):
+    for a ``pending`` envelope, the job id, the mesh's estimate in seconds and the URL
+    to poll; else None.
     """
 
     ok: bool
@@ -61,6 +68,9 @@ class EnvelopeResult:
     detail: str
     path: Optional[str]
     fault: Optional[str] = None
+    job: Optional[str] = None
+    estimate_seconds: Optional[int] = None
+    poll: Optional[str] = None
 
 
 def _bad(detail: str, path: str) -> NoReturn:
@@ -119,13 +129,25 @@ def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
         _bad("reason is only present with superseded_by", "$.reason")
     for name in sorted(env):  # JCS order (all names are ASCII)
         v, p = env[name], f"$.{name}"
-        if name in ("age_seconds", "retry_after_seconds"):
+        if name in ("age_seconds", "retry_after_seconds", "estimate_seconds"):
             _seconds(v, numbers.get(name), p)
         elif name == "error":
-            allowed_codes = BAD_REQUEST_CODES if outcome == "bad_request" else ERROR_OUTCOME_CODES
+            # E_JOB_UNKNOWN in bad_request is bound to a job URL in step 5
+            allowed_codes = BAD_REQUEST_CODES | {"E_JOB_UNKNOWN"} if outcome == "bad_request" else ERROR_OUTCOME_CODES
             if not isinstance(v, str) or v not in allowed_codes:
-                _bad("bad_request carries a code parse can raise (SPEC 5.4)" if outcome == "bad_request"
-                     else "error is a code from SPEC 10.2 other than E_ENVELOPE", p)
+                _bad("bad_request carries a code parse can raise (SPEC 5.4), or E_JOB_UNKNOWN" if outcome == "bad_request"
+                     else "error is a code from SPEC 10.2 other than E_ENVELOPE and E_JOB_UNKNOWN", p)
+        elif name == "job":
+            if not isinstance(v, str) or not JOB.fullmatch(v):
+                _bad("job is 32 to 64 lowercase hex digits", p)
+        elif name == "poll":
+            if (not isinstance(v, str) or len(v) > LIMIT_POLL or not v.startswith("https://")
+                    or not _URL_REST.fullmatch(v[8:])):
+                _bad(f"poll is https:// followed by printable ASCII, at most {LIMIT_POLL} characters", p)
+            if not v.endswith("/jobs/" + str(env.get("job"))):
+                _bad("poll ends /jobs/<job> with this envelope's job", p)
+        elif name == "request":
+            _echoed_request(v, p)
         elif name == "fault":
             if not isinstance(v, str) or v not in FAULT_CODES:
                 _bad(f"fault is a formula evaluation fault: one of {', '.join(FAULT_CODES)}", p)
@@ -155,26 +177,46 @@ def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
     return out
 
 
+def _echoed_request(v: Any, path: str) -> None:
+    """A pending envelope's ``request`` (spec-0.4.1): exactly ``cell_id`` (64 lowercase hex) and an optional
+    ``asof`` (an instant)."""
+    if not isinstance(v, dict) or "cell_id" not in v or not set(v) <= {"cell_id", "asof"}:
+        _bad("request has exactly cell_id and, when the request carried one, asof", path)
+    try:
+        if not isinstance(v["cell_id"], str):
+            raise DatumeshError("E_CANON_HEX", "not a string")
+        lx.check_hex(v["cell_id"], 64, None)
+        if "asof" in v:
+            if not isinstance(v["asof"], str):
+                raise DatumeshError("E_CANON_INSTANT", "not a string")
+            lx.check_instant(v["asof"], None)
+    except DatumeshError as e:
+        _bad(f"request.cell_id is 64 lowercase hex digits and request.asof an instant ({e.code})", path)
+
+
 def _is_primary(r: Dict[str, Any]) -> bool:
     """SPEC 5.5: the host of computed_by is the host of cell.ns, and inputs is empty."""
     return r["computed_by"].partition("#")[0] == lx.host_of(r["cell"]["ns"]) and not r["inputs"]
 
 
-def _check_request(request: Any) -> Tuple[str, Optional[str]]:
+def _check_request(request: Any) -> Tuple[str, Optional[str], Optional[str]]:
     if not isinstance(request, Mapping):
-        raise TypeError('request must be {"cell_id": <hex>, "asof": <instant> (optional)}')
-    if not set(request) <= {"cell_id", "asof"} or "cell_id" not in request:
-        raise ValueError('request has cell_id and optionally asof, nothing else')
-    cell_id, asof = request["cell_id"], request.get("asof")
+        raise TypeError('request must be {"cell_id": <hex>, "asof": <instant> (optional), "job": <id> (optional)}')
+    if not set(request) <= {"cell_id", "asof", "job"} or "cell_id" not in request:
+        raise ValueError('request has cell_id, and optionally asof and job, nothing else')
+    cell_id, asof, job = request["cell_id"], request.get("asof"), request.get("job")
+    if not isinstance(cell_id, str) or ("asof" in request and not isinstance(asof, str)) \
+            or ("job" in request and not isinstance(job, str)):
+        raise TypeError("request cell_id, asof and job are strings")
     try:
-        if not isinstance(cell_id, str) or ("asof" in request and not isinstance(asof, str)):
-            raise TypeError("request cell_id and asof are strings")
         lx.check_hex(cell_id, 64, "request.cell_id")
         if asof is not None:
             lx.check_instant(asof, "request.asof")
     except DatumeshError as e:
         raise ValueError(f"invalid request: {e}") from None
-    return cell_id, asof
+    if job is not None and not JOB.fullmatch(job):
+        raise ValueError("invalid request: job is 32 to 64 lowercase hex digits")
+    return cell_id, asof, job
 
 
 def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], keys: Any,
@@ -182,7 +224,7 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
     """Check a mesh's response (SPEC 5.5): the HTTP ``status`` and the ``body`` (JSON text or bytes)
     against the ``request`` it answers.
 
-    ``request`` is ``{"cell_id": <hex>, "asof": <instant>}``: the cell id (SPEC 4.4) of
+    ``request`` is ``{"cell_id": <hex>, "asof": <instant>, "job": <id>}``: the cell id (SPEC 4.4) of
     the cell requested, that is the cell its URI denotes with the ``fn_hash`` you
     resolved, and the ``asof`` of the request, omitted when the request had none.
 
@@ -197,6 +239,14 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
     A ``not_covered`` envelope may carry ``fault``, a formula evaluation fault
     (spec-0.4.0), exposed as ``EnvelopeResult.fault``.
 
+    Jobs (spec-0.4.1): a ``pending`` envelope (202) echoes the request; its
+    ``request`` must equal ``request`` (the same ``cell_id``, ``asof`` present
+    exactly when requested, and equal). When polling a job, pass the ORIGINAL
+    request with ``"job": <the job polled>``: a ``pending`` answer must then carry
+    that job, a ``bad_request`` may carry ``E_JOB_UNKNOWN`` (without ``job`` it is
+    ``E_ENVELOPE``), and any other answer is bound to the original ``cell_id`` and
+    ``asof`` as above, never to the job URL.
+
     Never raises for an invalid envelope; raises TypeError for a body that is not
     text or bytes, keys of an unsupported type or a request that is not a mapping,
     and ValueError for a malformed request. Uses no network.
@@ -204,10 +254,11 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
     if not isinstance(body, (str, bytes, bytearray, memoryview)):
         raise TypeError(f"body must be JSON text or bytes, not {type(body).__name__}")
     sources = key_sources(keys)
-    want_cell, want_asof = _check_request(request)
+    want_cell, want_asof, want_job = _check_request(request)
     try:
         parsed = parse_json(body)
-        env = _members(parsed, number_texts(body) if isinstance(parsed, dict) else {})
+        numbers = number_texts(body) if isinstance(parsed, dict) else {}
+        env = _members(parsed, numbers)
         outcome = env["outcome"]
         if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
             _bad(f"HTTP status {status!r} does not match outcome {outcome!r}", "status")
@@ -234,8 +285,24 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
                      "inputs", "$.trust")
             if env.get("superseded_by") == h:
                 _bad("superseded_by is the receipt's own hash", "$.superseded_by")
+        if outcome == "pending":
+            # step 5 for pending (spec-0.4.1): the echo is the request made, and the job is the one polled
+            echo = env["request"]
+            if echo["cell_id"] != want_cell:
+                _bad("the pending envelope echoes another cell than the one requested", "$.request.cell_id")
+            if echo.get("asof") != want_asof:
+                _bad("the pending envelope's echoed asof is not the requested asof (present exactly when "
+                     "requested, and equal)", "$.request")
+            if want_job is not None and env["job"] != want_job:
+                _bad("the pending envelope is for another job than the one polled", "$.job")
+        if env.get("error") == "E_JOB_UNKNOWN" and want_job is None:
+            _bad("E_JOB_UNKNOWN answers a job URL only, not a /cell request", "$.error")
         fault = env.get("fault")
-        return EnvelopeResult(True, "OK", outcome, trust, h, "well-formed envelope" + (
-            "; receipt signature-valid" if h else "") + (f"; evaluation fault {fault}" if fault else ""), None, fault)
+        detail = "well-formed envelope" + ("; receipt signature-valid" if h else "") + (
+            f"; evaluation fault {fault}" if fault else "") + (f"; job {env['job']}" if outcome == "pending" else "")
+        if outcome == "pending":
+            return EnvelopeResult(True, "OK", outcome, None, None, detail, None, None, env["job"],
+                                  int(numbers["estimate_seconds"]), env["poll"])
+        return EnvelopeResult(True, "OK", outcome, trust, h, detail, None, fault)
     except DatumeshError as e:
         return EnvelopeResult(False, e.code, None, None, None, e.detail, e.path)

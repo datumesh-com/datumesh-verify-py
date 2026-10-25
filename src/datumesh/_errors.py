@@ -6,6 +6,8 @@ from typing import NoReturn, Optional
 
 #: Every error code SPEC.md 10.2 defines, in the order of its table. Two, ``E_EVAL_UNAVAILABLE`` and
 #: ``E_INPUT_SUPERSEDED``, are not failures: :func:`verify` reports them with success (SPEC 10.1 step 7.6).
+#: The last two (spec-0.4.1) are not verification results: ``E_JOB_UNKNOWN`` is a mesh's answer in an
+#: envelope (5.5) and ``E_MESH_DOC`` a result of cross-mesh resolution (9.6).
 ERROR_CODES: tuple[str, ...] = (
     "E_PARSE_JSON",
     "E_PARSE_DUPLICATE_KEY",
@@ -51,6 +53,8 @@ ERROR_CODES: tuple[str, ...] = (
     "E_INPUT_SUPERSEDED",
     "E_BLOB_MISMATCH",
     "E_ENVELOPE",
+    "E_JOB_UNKNOWN",
+    "E_MESH_DOC",
 )
 
 

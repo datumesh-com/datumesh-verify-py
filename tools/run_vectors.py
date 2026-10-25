@@ -21,7 +21,9 @@ an absent ``value`` means evaluation is unavailable; its ``manifests`` (slice
 entry to manifest text) and ``lineage`` (spec-0.4.0) are passed as they are. A
 receipt vector's ``blob_hex`` is passed to ``verify`` as the blob content (step
 7.7), and the output then has ``blob_checked``; an envelope vector's ``request``
-is passed to ``check_envelope``. A slice vector's input is a manifest exactly when
+(with ``job`` since spec-0.4.1) is passed to ``check_envelope``. A ``mesh`` vector
+(spec-0.4.1) runs through ``resolve_mesh`` with its ``env.keys`` and ``env.mesh``
+(absent: a failed retrieval) and outputs ``bindings`` and ``endpoints``. A slice vector's input is a manifest exactly when
 it is an object with a ``members`` member, else a slice object (SPEC 11).
 
 The kinds ``formula``, ``formula-eval``, ``excel`` and ``decimal`` (spec-0.4.0)
@@ -55,6 +57,14 @@ def _env_keys(host: str, env: Dict[str, Any]) -> datumesh.KeysResult:
     https = env.get("https") or {}
     status = https.get("status", "error")
     return datumesh.keys_from_response(host, None if status == "error" else status, https.get("body"))
+
+
+def _response(env: Any) -> Any:
+    """An ``env`` as the ``(status, body)`` pair ``resolve_mesh`` takes; ``"error"`` or no status: a failed
+    retrieval (status None)."""
+    https = (env or {}).get("https") or {}
+    status = https.get("status", "error")
+    return (None if status == "error" else status), https.get("body")
 
 
 def _recompute(rc: Any) -> Any:
@@ -121,6 +131,14 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
             # Members are parsed JSON values: pass them as JSON text, so that a JSON string member is a
             # string value (resolved_unit would otherwise parse a str as JSON text).
             out["unit"] = datumesh.resolved_unit(json.dumps(obj["descriptor"]), json.dumps(obj["cell"]))
+        elif kind == "mesh":
+            # spec-0.4.1: env {"keys", "mesh"}, each an env as for keys; an absent member is a failed retrieval
+            env = v.get("env") or {}
+            res = datumesh.resolve_mesh(v["host"], _response(env.get("keys")), _response(env.get("mesh")))
+            if not res.ok:
+                out["error"] = res.code
+            else:
+                out.update(bindings=res.bindings, endpoints=dict(res.endpoints))
         elif kind == "slice":
             obj = datumesh.parse_json(_input(v))
             if isinstance(obj, dict) and "members" in obj:  # SPEC 11: a manifest exactly when it has members
