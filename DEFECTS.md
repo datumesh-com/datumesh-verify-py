@@ -1,6 +1,7 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Six sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.1` (DEF-48 to DEF-51), then
+Six sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.1` (DEF-48 to DEF-51, all
+resolved at `3f79313`), then
 `spec-0.4.0` (what that revision
 resolves, and DEF-42 to DEF-47, all resolved at `18be70f`), then `spec-0.3.0` (what that revision resolves, and DEF-40 to
 DEF-41), then `spec-0.2.1` (status of every entry at that revision, and DEF-39), then `spec-0.2.0`
@@ -390,14 +391,23 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 
 # spec-0.4.1
 
-Spec commit `0dac072` (the `spec-0.4.1` draft, on top of `spec-0.4.0` = `f3d3e2c`; the tag is to be put on
-it or on a later commit). This library is 0.4.1 and conforms: of the 1,024 vectors, the 478 for verifier
+Spec commit `3f79313` (the `spec-0.4.1` draft, on top of `spec-0.4.0` = `f3d3e2c`; first conformed at
+`0dac072`, then moved to `3f79313`, which settles DEF-48 to DEF-51 and adds 13 vectors, 1037 in all; the
+tag is to be put on it or on a later commit). At `3f79313` the 491 vectors for verifier libraries pass. This library is 0.4.1 and conforms: of the 1,024 vectors, the 478 for verifier
 libraries pass (through the API and `tools/run_vectors.py`) and the 546 formula-evaluator vectors are
 skipped. `tests/test_spec_0_4_1.py` tests the changes through the API. Implemented from the diff of SPEC.md,
 the schemas and the vectors; `canon.py` run as a black box only: the 88 mesh and 71 envelope cases of the
 tests agree with it, and so do 10,000 mutated vectors of `tools/oracle_fuzz.py` (now also mutating mesh
 documents and the request's `job`). The six text items of `spec-0.4.1` concern formula evaluation and
-change nothing here. DEF-34 stays open: no `spec-0.4.1` tag, and `0dac072` is not on GitHub yet.
+change nothing here. DEF-34 stays open: no `spec-0.4.1` tag, and neither `0dac072` nor `3f79313` is on
+GitHub yet.
+
+| Entry | Status at 3f79313 |
+|---|---|
+| DEF-48 | Resolved (11, vectors): the valid `mesh` vectors carry `bindings` and `endpoints`, and the reference requires them. The conformance test now checks the derivation from the document against them; they agree. Closed. |
+| DEF-49 | Resolved (9.6 step 4): "the key document's `host` and `proto`, each where it is a string, equal the host fetched and `"datumesh/1"` ... a key document that is valid JSON but is not an object, or that has no `host` or `proto` or a non-string one, has nothing to compare there, and fails at step 5 as `E_KEY_DOC`". This differs from what I had (and what the reference had) for a key document object without `proto` or with a non-string one: `E_MESH_DOC` then, `E_KEY_DOC` now; the library follows the text. Closed. |
+| DEF-50 | Resolved (9.6 step 1): "a 200 response without a body is `E_KEY_DOC`, here at step 1, before the mesh document is retrieved." As implemented. Closed. |
+| DEF-51 | Resolved (5.5, `poll`): "The text between `https://` and the next `/` is a DNS name (2.1)"; "the client's HTTP layer MUST check that `poll` names the host it sent the request to". The library now rejects an empty host, a port, userinfo, an IP address, uppercase or a query after the host (`E_ENVELOPE`); a `poll` on another DNS name passes, as before. Also settled with it (9.6): a URL is on the host when it begins `https://<host>/`; every `{` and `}` of an endpoint template belongs to a placeholder, so a lone `}` is now `E_MESH_DOC` (it was accepted here, and by the reference); `bindings` braces and unknown endpoints are not checked, as implemented. Closed. |
 
 ## DEF-48. 11: valid `mesh` vectors carry no `bindings` or `endpoints`
 
