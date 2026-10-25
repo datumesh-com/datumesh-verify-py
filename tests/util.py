@@ -76,8 +76,8 @@ OUTPUTS = {
     "envelope": ["outcome", "trust", "receipt_hash"],
     # slice (spec-0.4.0): members_hash and entry only for a manifest
     "slice": ["canonical", "sha256", "slice_id", "members_hash", "entry"],
-    # mesh (spec-0.4.1): bindings and endpoints; the vector files do not carry them (DEFECTS.md DEF-48), so
-    # they are derived from the mesh document by SPEC 9.6's rule (unknown members dropped)
+    # mesh (spec-0.4.1): bindings and endpoints, carried by the valid vectors since 3f79313 (DEF-48); the
+    # derivation from the mesh document by SPEC 9.6's rule is checked against them
     "mesh": ["bindings", "endpoints"],
 }
 
@@ -88,8 +88,11 @@ MESH_ENDPOINTS = ("blob", "cell", "cells", "descriptor", "explain", "find", "job
 
 def mesh_outputs(v: Dict[str, Any]) -> Dict[str, Any]:
     doc = json.loads(v["env"]["mesh"]["https"]["body"])
-    return {"bindings": v.get("bindings", doc["bindings"]),
-            "endpoints": v.get("endpoints", {k: x for k, x in doc["endpoints"].items() if k in MESH_ENDPOINTS})}
+    derived = {"bindings": doc["bindings"],
+               "endpoints": {k: x for k, x in doc["endpoints"].items() if k in MESH_ENDPOINTS}}
+    if v["valid"]:
+        assert {"bindings": v["bindings"], "endpoints": v["endpoints"]} == derived, v["id"]
+    return derived
 
 
 def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:

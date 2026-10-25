@@ -69,6 +69,8 @@ class PendingMembersTest(unittest.TestCase):
         path = "https://mesh.example/" + "p" * (512 - len("https://mesh.example/") - len(f"/jobs/{JOB}")) + f"/jobs/{JOB}"
         self.assertEqual(len(path), 512)
         self.assertEqual(env_code(pending(poll=path)), "OK")
+        # a poll on another DNS name passes: comparing it with the host asked is the client's HTTP layer's check
+        self.assertEqual(env_code(pending(poll=f"https://other.example.net/a/b/jobs/{JOB}")), "OK")
         # the other outcomes have no job members
         res = check_envelope(404, '{"outcome": "not_covered"}', [], {"cell_id": CELL})
         self.assertEqual((res.job, res.estimate_seconds, res.poll), (None, None, None))
@@ -92,6 +94,11 @@ class PendingMembersTest(unittest.TestCase):
             dict(poll=f"http://mesh.example/jobs/{JOB}"), dict(poll=f"https://mesh.example/jobs/{OTHER_JOB}"),
             dict(poll=f"https://mesh.example/jobs/{JOB}/"), dict(poll=f"https://mesh.example/job{JOB}"),
             dict(poll=f"https://mesh example/jobs/{JOB}"), dict(poll=5),
+            # 3f79313: the text between https:// and the next / is a DNS name
+            dict(poll=f"https:///jobs/{JOB}"), dict(poll=f"https://mesh.example:443/jobs/{JOB}"),
+            dict(poll=f"https://u@mesh.example/jobs/{JOB}"), dict(poll=f"https://192.0.2.1/jobs/{JOB}"),
+            dict(poll=f"https://Mesh.example/jobs/{JOB}"), dict(poll=f"https://mesh.example?x=/jobs/{JOB}"),
+            dict(poll=f"https://mesh/jobs/{JOB}"), dict(poll=f"https://mesh.example#x/jobs/{JOB}"),
             dict(poll="https://mesh.example/" + "p" * 512 + f"/jobs/{JOB}"),
             dict(request=[]), dict(request={"asof": ASOF}), dict(request={"cell_id": CELL, "asof": ASOF, "job": JOB}),
             dict(request={"cell_id": CELL.upper(), "asof": ASOF}), dict(request={"cell_id": CELL, "asof": "2024-03-16"}),
@@ -223,7 +230,7 @@ class MeshVectorsTest(unittest.TestCase):
                     self.assertEqual((res.ok, res.code, res.bindings, res.endpoints, res.keys),
                                      (False, v["error"], None, {}, None))
                 n += 1
-        self.assertEqual(n, 20)
+        self.assertEqual(n, 30)
 
     def test_unknown_members_dropped(self) -> None:
         res = resolve_mesh(HOST, KEYS_OK, ok(dict(MESH_DOC, x_status=5, endpoints=dict(MESH_DOC["endpoints"], x=[1]))))
@@ -268,14 +275,16 @@ class MeshOrderTest(unittest.TestCase):
         self.assertEqual(mesh_code(KEYS_OK, ok(dict(MESH_DOC, host=5))), "E_MESH_DOC")
         self.assertEqual(mesh_code(ok(dict(KEY_DOC, host="other.example.org")), ok(MESH_DOC)), "E_MESH_DOC")
         self.assertEqual(mesh_code(ok(dict(KEY_DOC, proto="datumesh/2")), ok(MESH_DOC)), "E_MESH_DOC")
-        self.assertEqual(mesh_code(ok(dict(KEY_DOC, proto=1)), ok(MESH_DOC)), "E_MESH_DOC")
-        self.assertEqual(mesh_code(ok({k: x for k, x in KEY_DOC.items() if k != "proto"}), ok(MESH_DOC)), "E_MESH_DOC")
+        # 3f79313: the key document's proto is compared only where it is a string; else step 5 (E_KEY_DOC)
+        self.assertEqual(mesh_code(ok(dict(KEY_DOC, proto=1)), ok(MESH_DOC)), "E_KEY_DOC")
+        self.assertEqual(mesh_code(ok({k: x for k, x in KEY_DOC.items() if k != "proto"}), ok(MESH_DOC)), "E_KEY_DOC")
+        self.assertEqual(mesh_code(KEYS_OK, ok(dict(MESH_DOC, proto=1))), "E_MESH_DOC")
         self.assertEqual(mesh_code(KEYS_OK, ok({k: x for k, x in MESH_DOC.items() if k != "proto"})), "E_MESH_DOC")
         self.assertEqual(mesh_code(ok(dict(KEY_DOC, proto="datumesh/2")), ok(dict(MESH_DOC, proto="datumesh/2"))),
                          "E_MESH_DOC")
         # identity before the key document's own rules, and before the mesh document's members
         self.assertEqual(mesh_code(ok(dict(KEY_DOC, keys=[], proto="datumesh/2")), ok(MESH_DOC)), "E_MESH_DOC")
-        # a key document whose host is not a string, or that is not an object, is left to step 5 (DEF-49)
+        # a key document whose host is not a string, or that is not an object, is left to step 5 (DEF-49, 3f79313)
         self.assertEqual(mesh_code(ok({k: x for k, x in KEY_DOC.items() if k != "host"}), ok(MESH_DOC)), "E_KEY_DOC")
         self.assertEqual(mesh_code(ok(dict(KEY_DOC, host=5)), ok(MESH_DOC)), "E_KEY_DOC")
         self.assertEqual(mesh_code(ok([]), ok(MESH_DOC)), "E_KEY_DOC")
@@ -311,7 +320,13 @@ class MeshOrderTest(unittest.TestCase):
             (endpoints(cells="https://mesh.example.org/" + "a" * 600), "E_MESH_DOC"),
             (endpoints(cells="https://mesh.example.org/" + "a" * (512 - 25)), "OK"),
             (endpoints(cells="https://mesh.example.org/c ells"), "E_MESH_DOC"),
-            (endpoints(cells="https://mesh.example.org/cells}"), "OK"),
+            (endpoints(cells="https://mesh.example.org/cells}"), "E_MESH_DOC"),  # 3f79313: a lone }
+            (endpoints(cell="https://mesh.example.org/cell/{cell}}"), "E_MESH_DOC"),
+            (endpoints(cell="https://mesh.example.org/cell/{}{cell}"), "E_MESH_DOC"),
+            (endpoints(cell="https://mesh.example.org/cell/}{cell}"), "E_MESH_DOC"),
+            (endpoints(cells="https://mesh.example.org/"), "OK"),  # https://<host>/ alone is on the host
+            (endpoints(x_y="https://other.example.org/}{"), "OK"),  # unknown endpoints are not checked
+            (ok(dict(MESH_DOC, bindings="https://mesh.example.org/b}{")), "OK"),  # bindings is not a template
             (endpoints(cells="https://mesh.example.org/cells?x={"), "E_MESH_DOC"),
             (endpoints(cells="https://mesh.example.org/cells/{cell}"), "E_MESH_DOC"),
             (endpoints(cell="https://mesh.example.org/cell/{cell}{cell}"), "E_MESH_DOC"),

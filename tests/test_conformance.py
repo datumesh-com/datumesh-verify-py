@@ -17,13 +17,13 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        # spec-0.4.1 (SPEC 14): 1024 vectors; 478 for verifier libraries, the rest for formula evaluators
-        self.assertEqual(sum(counts.values()), 1024, counts)
-        self.assertEqual(len(verifier_vectors()), 478, counts)
-        self.assertEqual(counts["mesh"], 20, counts)
+        # spec-0.4.1 (SPEC 14, 3f79313): 1037 vectors; 491 for verifier libraries, the rest for formula evaluators
+        self.assertEqual(sum(counts.values()), 1037, counts)
+        self.assertEqual(len(verifier_vectors()), 491, counts)
+        self.assertEqual(counts["mesh"], 30, counts)
         self.assertEqual(sum(counts[k] for k in FORMULA_KINDS), 546, counts)
         self.assertEqual(counts["unit"], 13, counts)
-        self.assertEqual(counts["envelope"], 89, counts)
+        self.assertEqual(counts["envelope"], 92, counts)
         self.assertEqual(counts["slice"], 18, counts)
         self.assertEqual(counts["function"], 48 + 16, counts)
         # 30 slice-lineage receipt vectors (13 valid, 17 invalid); invalid/receipt-slice is from spec-0.1
