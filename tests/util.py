@@ -76,11 +76,27 @@ OUTPUTS = {
     "envelope": ["outcome", "trust", "receipt_hash"],
     # slice (spec-0.4.0): members_hash and entry only for a manifest
     "slice": ["canonical", "sha256", "slice_id", "members_hash", "entry"],
+    # mesh (spec-0.4.1): bindings and endpoints; the vector files do not carry them (DEFECTS.md DEF-48), so
+    # they are derived from the mesh document by SPEC 9.6's rule (unknown members dropped)
+    "mesh": ["bindings", "endpoints"],
 }
+
+#: The known endpoints of SPEC 9.6.
+MESH_ENDPOINTS = ("blob", "cell", "cells", "descriptor", "explain", "find", "jobs", "manifest", "receipt", "slice",
+                  "verify")
+
+
+def mesh_outputs(v: Dict[str, Any]) -> Dict[str, Any]:
+    doc = json.loads(v["env"]["mesh"]["https"]["body"])
+    return {"bindings": v.get("bindings", doc["bindings"]),
+            "endpoints": v.get("endpoints", {k: x for k, x in doc["endpoints"].items() if k in MESH_ENDPOINTS})}
 
 
 def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
     exp: Dict[str, Any] = {"id": v["id"], "error": v.get("error")}
+    if v["valid"] and v["kind"] == "mesh":
+        exp.update(mesh_outputs(v))
+        return exp
     if v["valid"]:
         for k in OUTPUTS[v["kind"]]:
             if v["kind"] == "envelope" and k != "outcome" and k not in v:

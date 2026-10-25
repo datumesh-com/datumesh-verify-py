@@ -780,8 +780,6 @@ class CodesTest(unittest.TestCase):
             self.assertNotIn(c, codes)
 
     def test_versions(self) -> None:
-        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.4.0")
-        self.assertEqual(datumesh.__version__, "0.4.0")
         self.assertIn("slice", datumesh.KINDS)
         self.assertIn("manifest", datumesh.KINDS)
         for name in ("slice_id", "members_hash", "slice_entry", "FAULT_CODES", "SUCCESS_CODES"):

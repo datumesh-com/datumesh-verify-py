@@ -13,8 +13,8 @@ import datumesh
 from datumesh import EnvelopeResult, check_envelope
 
 STATUS = {"ok": [200], "stale": [200], "not_covered": [404], "unlicensed": [403], "payment_required": [402],
-          "rate_limited": [429], "bad_request": [400], "error": list(range(500, 600))}
-PROBE_STATUSES = [100, 200, 201, 204, 301, 302, 304, 400, 401, 402, 403, 404, 409, 429, 499, 500, 503, 599, 600, 0, -200]
+          "rate_limited": [429], "bad_request": [400], "error": list(range(500, 600)), "pending": [202]}
+PROBE_STATUSES = [100, 200, 201, 202, 204, 301, 302, 304, 400, 401, 402, 403, 404, 409, 429, 499, 500, 503, 599, 600, 0, -200]
 
 PRIMARY = next(v for v in vectors_of("envelope", True) if v["id"] == "envelope/ok-primary")
 KEYS = env_keys(PRIMARY["keys"])
@@ -60,7 +60,7 @@ class EnvelopeVectorTest(unittest.TestCase):
                 else:
                     self.assertEqual((res.ok, res.code), (False, v["error"]))
                 n += 1
-        self.assertEqual(n, 63)  # spec-0.4.0: three with fault
+        self.assertEqual(n, 89)  # spec-0.4.0: three with fault; spec-0.4.1: 26 pending and job vectors
 
     def test_valid_bodies_with_wrong_status(self) -> None:
         total = 0

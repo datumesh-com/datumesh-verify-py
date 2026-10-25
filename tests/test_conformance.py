@@ -17,12 +17,13 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        # spec-0.4.0 (SPEC 14): 978 vectors; 432 for verifier libraries, the rest for formula evaluators
-        self.assertEqual(sum(counts.values()), 978, counts)
-        self.assertEqual(len(verifier_vectors()), 432, counts)
+        # spec-0.4.1 (SPEC 14): 1024 vectors; 478 for verifier libraries, the rest for formula evaluators
+        self.assertEqual(sum(counts.values()), 1024, counts)
+        self.assertEqual(len(verifier_vectors()), 478, counts)
+        self.assertEqual(counts["mesh"], 20, counts)
         self.assertEqual(sum(counts[k] for k in FORMULA_KINDS), 546, counts)
         self.assertEqual(counts["unit"], 13, counts)
-        self.assertEqual(counts["envelope"], 63, counts)
+        self.assertEqual(counts["envelope"], 89, counts)
         self.assertEqual(counts["slice"], 18, counts)
         self.assertEqual(counts["function"], 48 + 16, counts)
         # 30 slice-lineage receipt vectors (13 valid, 17 invalid); invalid/receipt-slice is from spec-0.1
@@ -31,7 +32,7 @@ class ConformanceTest(unittest.TestCase):
         # every kind is one the runner knows (or skips)
         for v in load_vectors():
             self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",
-                                      "receipt", "unit", "envelope", "slice") + FORMULA_KINDS, v["id"])
+                                      "receipt", "unit", "envelope", "slice", "mesh") + FORMULA_KINDS, v["id"])
 
     def test_every_vector_in_process(self) -> None:
         run = runner().run_vector
