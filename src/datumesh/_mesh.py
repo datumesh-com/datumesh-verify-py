@@ -96,9 +96,12 @@ def _url_on_host(v: Any, host: str, name: str) -> str:
 def _endpoint(v: Any, host: str, name: str) -> str:
     url = _url_on_host(v, host, f"endpoints.{name}")
     placeholders = MESH_ENDPOINTS[name][0]
-    if url.count("{") != len(placeholders) or any(url.count("{" + p + "}") != 1 for p in placeholders):
+    # every { and } belongs to one of the placeholders, each used once (3f79313)
+    if url.count("{") != len(placeholders) or url.count("}") != len(placeholders) \
+            or any(url.count("{" + p + "}") != 1 for p in placeholders):
         listed = ", ".join("{" + p + "}" for p in placeholders) or "none"
-        raise _Fail("E_MESH_DOC", f"endpoints.{name} has exactly the placeholders {listed}, each once, and no other {{")
+        raise _Fail("E_MESH_DOC", f"endpoints.{name} has exactly the placeholders {listed}, each once, and no other "
+                    "brace")
     return url
 
 
@@ -113,9 +116,9 @@ def resolve_mesh(host: Any, keys: Any, mesh: Any) -> MeshResult:
     1. the key document is retrieved: an int 200 (``E_KEY_UNAVAILABLE`` otherwise), with a body (``E_KEY_DOC``);
     2. the mesh document is retrieved: an int 200 with a body (``E_MESH_DOC``, 404 included);
     3. both parse strictly: the key document (``E_KEY_DOC``), then the mesh document, an object (``E_MESH_DOC``);
-    4. they describe the same mesh (``E_MESH_DOC``): the mesh document's ``host`` is ``host``; the key document's,
-       where it is a string, too; and, when the key document is an object, the two ``proto``\\ s are equal and
-       ``"datumesh/1"``;
+    4. they describe the same mesh (``E_MESH_DOC``): the mesh document's ``host`` is ``host`` and its ``proto``
+       ``"datumesh/1"``; the key document's ``host`` and ``proto``, each where it is a string in an object, are
+       ``host`` and ``"datumesh/1"`` (otherwise they are left to step 5);
     5. the key document by 9.2 (``E_KEY_DOC``);
     6. the mesh document's members (``E_MESH_DOC``): ``bindings``, then ``endpoints`` (an object with every
        required endpoint), then each known endpoint in ascending name order.
@@ -144,12 +147,14 @@ def resolve_mesh(host: Any, keys: Any, mesh: Any) -> MeshResult:
         # 4: the same mesh
         if md.get("host") != host or not isinstance(md.get("host"), str):
             raise _Fail("E_MESH_DOC", f"the mesh document names another host than {host!r}")
+        if md.get("proto") != PROTO:
+            raise _Fail("E_MESH_DOC", f"the mesh document's proto is not {PROTO!r}")
+        # the key document's side only where each member is a string in an object (3f79313); else step 5
         if isinstance(kd, dict):
             if isinstance(kd.get("host"), str) and kd["host"] != host:
                 raise _Fail("E_MESH_DOC", f"the key document names another host than {host!r}")
-            if "proto" not in md or "proto" not in kd or md["proto"] != kd["proto"] or md["proto"] != PROTO:
-                raise _Fail("E_MESH_DOC", f"the mesh document and the key document disagree on proto, or it is "
-                            f"not {PROTO!r}")
+            if isinstance(kd.get("proto"), str) and kd["proto"] != PROTO:
+                raise _Fail("E_MESH_DOC", f"the key document's proto is not {PROTO!r}")
         # 5: the key document
         kr = validate_key_document(kd, host)
         if not kr.ok:

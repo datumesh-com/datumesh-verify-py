@@ -144,6 +144,11 @@ def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
             if (not isinstance(v, str) or len(v) > LIMIT_POLL or not v.startswith("https://")
                     or not _URL_REST.fullmatch(v[8:])):
                 _bad(f"poll is https:// followed by printable ASCII, at most {LIMIT_POLL} characters", p)
+            try:
+                lx.check_dns_name(v[8:].split("/", 1)[0], p)
+            except DatumeshError:
+                _bad("poll's host (between https:// and the next /) is a DNS name (SPEC 2.1): no port, userinfo, "
+                     "IP address or query; whether it is the host asked is the client's HTTP layer's check", p)
             if not v.endswith("/jobs/" + str(env.get("job"))):
                 _bad("poll ends /jobs/<job> with this envelope's job", p)
         elif name == "request":
