@@ -1,6 +1,7 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Five sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.0` (what that revision
+Six sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.1` (DEF-48 to DEF-51), then
+`spec-0.4.0` (what that revision
 resolves, and DEF-42 to DEF-47, all resolved at `18be70f`), then `spec-0.3.0` (what that revision resolves, and DEF-40 to
 DEF-41), then `spec-0.2.1` (status of every entry at that revision, and DEF-39), then `spec-0.2.0`
 (DEF-23 to DEF-38). The `spec-0.1.1` entries are kept as written; where `spec-0.2.0` left one open, the
@@ -386,6 +387,74 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 - Vector `canonical` strings may contain U+2028 (`jcs/escapes`), which some JSON-lines tooling
   treats as a line break; the conformance runner here escapes all non-ASCII output for that
   reason. Worth a sentence in 11 for harness authors.
+
+# spec-0.4.1
+
+Spec commit `0dac072` (the `spec-0.4.1` draft, on top of `spec-0.4.0` = `f3d3e2c`; the tag is to be put on
+it or on a later commit). This library is 0.4.1 and conforms: of the 1,024 vectors, the 478 for verifier
+libraries pass (through the API and `tools/run_vectors.py`) and the 546 formula-evaluator vectors are
+skipped. `tests/test_spec_0_4_1.py` tests the changes through the API. Implemented from the diff of SPEC.md,
+the schemas and the vectors; `canon.py` run as a black box only: the 88 mesh and 71 envelope cases of the
+tests agree with it, and so do 10,000 mutated vectors of `tools/oracle_fuzz.py` (now also mutating mesh
+documents and the request's `job`). The six text items of `spec-0.4.1` concern formula evaluation and
+change nothing here. DEF-34 stays open: no `spec-0.4.1` tag, and `0dac072` is not on GitHub yet.
+
+## DEF-48. 11: valid `mesh` vectors carry no `bindings` or `endpoints`
+
+**Problem.** 11 lists `bindings` and `endpoints` as the outputs of a valid `mesh` vector, and
+`vector.schema.json` defines both, but none of the three valid vectors (`mesh/full`,
+`mesh/required-only`, `mesh/extension-members`) has them. So the expected result of a valid vector is only
+"success", and the dropping of unknown members, which `mesh/extension-members` describes, is not pinned.
+
+**Resolution.** The runner outputs both, as 11 says; the conformance test derives the expected values from
+the vector's mesh document by 9.6 (the bindings URL; the known endpoints, unknown ones dropped), and would use
+the vector's members if they were there.
+
+**Proposed change.** Add `bindings` and `endpoints` to the three valid `mesh` vectors.
+
+## DEF-49. 9.6 step 4: a key document that is not an object, or whose `proto` is missing
+
+**Problem.** Step 4 requires "the two `proto`s are equal and `"datumesh/1"`" and compares the key document's
+`host` "where it is a string". It does not say what happens when the key document parsed but is not an
+object (it has no `proto` to compare), or is an object without `proto`.
+
+**Resolution.** As the reference tool does: a key document that is not an object is left to step 5
+(`E_KEY_DOC`), though the mesh document's own `host` is still checked in step 4; an object key document
+without `proto`, or with another, fails step 4 (`E_MESH_DOC`).
+
+**Proposed wording (step 4).** "... where it is a string, equals it too, and, when the key document is an
+object, the two `proto`s are present, equal and `"datumesh/1"`. A key document that is not an object is
+left to step 5."
+
+## DEF-50. 9.6 step 1: a key document response of 200 without a body
+
+**Problem.** Step 1 is "Retrieve the key document as in 9.3 (`E_KEY_UNAVAILABLE`)", and step 3 gives
+`E_KEY_DOC` to a key document that does not parse. A 200 without a body is neither clearly: it decides
+between `E_KEY_DOC` and `E_MESH_DOC` when the mesh document is also missing.
+
+**Resolution.** As the reference tool, and this library's `keys_from_response`: `E_KEY_DOC` at step 1,
+before the mesh document is looked at. A key document with a body that does not parse is step 3, after the
+mesh document's retrieval (`E_MESH_DOC` first when that fails too). Step 1 does not check the host's form:
+a host that is not a DNS name fails later (step 4 or 5).
+
+**Proposed wording (step 1).** "Retrieve the key document as in 9.3: anything but the integer status 200 is
+`E_KEY_UNAVAILABLE`, and a 200 without a body `E_KEY_DOC`."
+
+## DEF-51. 5.5: `poll` need not name a host
+
+**Problem.** `poll` is "`https://` followed by printable ASCII, at most 512 characters, ending
+`/jobs/<job>`", so `https:///jobs/<job>` passes, and so does a `poll` on another host. 5.5 puts the host
+check on the client's HTTP layer ("the envelope check cannot see this"), but an empty authority could be
+rejected by the envelope check, as the mesh document's URLs are (9.6: "its authority is exactly `host`,
+followed by a path").
+
+**Resolution.** As written: such a `poll` passes the envelope check (the reference tool agrees on the cases
+tried). The library does not compare it with any host.
+
+**Proposed wording (5.5, `poll`).** Either keep it and say "an envelope check does not look at the
+authority", or require a non-empty authority: "`https://`, a host, then a path ending `/jobs/<job>`".
+
+---
 
 # spec-0.4.0
 

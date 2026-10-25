@@ -60,6 +60,10 @@ POOL += ["EUR", "USD", "usd", "GRD", "XXX", "degC", "°C", "kWh", "m/s", "1", "p
          "9dc30a40021f1f79d8dd9437ec9014ce134138326b72fcb9696485ab3d69330a:17:text/Plain",
          "ok", "stale", "not_covered", "unlicensed", "payment_required", "rate_limited", "error",
          "primary", "verified", "unverified", "E_SIGNATURE", "E_TEAPOT", "0.05", "https://mesh.example/pay"]
+# spec-0.4.1: pending, jobs, mesh documents
+POOL += ["pending", "E_JOB_UNKNOWN", "E_MESH_DOC", "4f9c2a7e1b3d5f60817a9c2e4b6d8f01",
+         "https://mesh.example/jobs/4f9c2a7e1b3d5f60817a9c2e4b6d8f01", "https://mesh.example.org/cell/{cell}",
+         "https://other.example.org/x", "mesh.example.org", "{hash}", "datumesh/2"]
 # spec-0.4.0: slice entries, ranges, order and extent, faults, new units
 POOL += ["slice:" + "0" * 64 + ":" + "0" * 64, "slice:" + "f" * 64 + ":" + "A" * 64, "slice:" + "0" * 64,
          "2026-03-01", "2026-03-05", "2026-03-01T09:55:00.000000Z", "-1", "10", "2.5", "min", "h", "d", "km",
@@ -146,7 +150,8 @@ def resign(r, seed):
 def emit(i, v):
     v = dict(v, id="probe/f%05d" % i, valid=False, error="E_PROBE", description="fuzz")
     for k in ("canonical", "sha256", "object", "https", "key_id", "key_ids", "sig", "level", "unit", "outcome",
-              "trust", "receipt_hash", "code", "blob_checked", "slice_id", "members_hash", "entry"):
+              "trust", "receipt_hash", "code", "blob_checked", "slice_id", "members_hash", "entry", "bindings",
+              "endpoints"):
         v.pop(k, None)
     json.dump(v, open(os.path.join(OUT, "f%05d.json" % i), "w"))
 
@@ -258,8 +263,33 @@ while i < N:
                 except Exception:
                     pass
             v["input"] = json.dumps(obj)
+        elif kind == "mesh":
+            # spec-0.4.1: mutate the mesh document, the key document, or a status
+            env = v["env"]
+            t = rnd.random()
+            which = "mesh" if t < 0.75 else "keys"
+            e = env.setdefault(which, {"https": {"status": "error"}})["https"]
+            if "body" in e and rnd.random() < 0.85:
+                try:
+                    e["body"] = json.dumps(mutate(json.loads(e["body"])))
+                except ValueError:
+                    e["body"] = e["body"][:-1]
+            else:
+                e["status"] = rnd.choice([200, 404, 301, "error"])
+                if e["status"] != 200:
+                    e.pop("body", None)
         elif kind == "envelope":
             t = rnd.random()
+            if t < 0.1 and isinstance(v.get("request"), dict):
+                # spec-0.4.1: the job in the request description, present, absent or another
+                if "job" in v["request"] and rnd.random() < 0.5:
+                    v["request"].pop("job")
+                else:
+                    v["request"]["job"] = rnd.choice(["4f9c2a7e1b3d5f60817a9c2e4b6d8f01",
+                                                      "0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a"])
+                emit(i, v)
+                i += 1
+                continue
             if t < 0.15:
                 v["status"] = rnd.choice([200, 402, 403, 404, 429, 500, 503, 599, 600, 400])
             else:
