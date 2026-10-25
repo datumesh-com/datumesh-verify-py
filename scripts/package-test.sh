@@ -5,12 +5,12 @@
 #   3. run the README's Python example verbatim (extracted from README.md) in a checkout of the
 #      spec at tag spec-0.4.0 (the spec/ submodule stands in for the README's `git clone`, and the
 #      built wheel for `pip install datumesh`), and compare its output with the README's comment.
-#      The submodule must be at 18be70f, the commit the tag is to be put on (checked by commit:
+#      The submodule must be at f3d3e2c, the commit the tag is to be put on (checked by commit:
 #      the tag does not exist yet, and CI checkouts do not fetch the submodule's tags).
 set -eu
 cd "$(dirname "$0")/.."
 [ -f spec/vectors/receipt/stored-number.json ] || { echo "spec submodule missing: git submodule update --init" >&2; exit 1; }
-SPEC_COMMIT=18be70f
+SPEC_COMMIT=f3d3e2c
 case "$(git -C spec rev-parse HEAD)" in
   "$SPEC_COMMIT"*) ;;
   *) echo "spec/ is not at spec-0.4.0 ($SPEC_COMMIT)" >&2; exit 1 ;;

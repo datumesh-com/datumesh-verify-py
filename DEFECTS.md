@@ -389,9 +389,10 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 
 # spec-0.4.0
 
-Spec commit `18be70f` (the `spec-0.4.0` draft; first conformed at `dedd132`, then moved to `18be70f`,
-which settles DEF-42 to DEF-47 in the text with no vector changed; the tag is to be put on it, or on a
-later commit).
+Spec commit `f3d3e2c`, final for `spec-0.4.0` (the tag is to be put on it). First conformed at
+`dedd132`, then moved to `18be70f`, which settles DEF-42 to DEF-47 in the text, then to `f3d3e2c`
+(formula-dialect text, reference formula tool fixes, `site/` moved out); no vector result or hash
+changed on either move.
 This library is 0.4.0 and conforms: of the 978 vectors, the 432 for verifier libraries pass, through
 the API and through `tools/run_vectors.py`; the 546 of kinds `formula`, `formula-eval`, `excel` and
 `decimal` are for formula evaluators and are skipped (this library evaluates no function).
@@ -410,7 +411,7 @@ none of `tools/*.py`, `tests/*`, `crosscheck/*` (except its README) or `DESIGN-0
 | DEF-45 | Resolved at `18be70f` (10.1 step 7.6, "A superseded input"): "`e` is replaced when the lineage does not list `e` and lists an entry `n` that `inputs` does not list, such that: for a receipt hash `e`: a receipt is offered for `n`, it is signature-valid through step 6, it hashes to `n`, it has the same cell id (4.4) as `e`'s receipt, and its `tx` is strictly later ... nothing else about it is checked (not its `asof`, not its function); for a slice entry `e`: `n` is a string that begins `slice:` followed by `e`'s slice id and `:` ... no manifest is read", "The lineage is a set", and "An item of the lineage that is not a string replaces nothing, and lineage items are not otherwise validated." It agrees with my reading on (a), (b), (c) and (e), and differs in three details, which this library now follows (commit after the test commit for 18be70f): an `e` that the lineage also lists was counted as replaced here, and is not; a slice replacement had to have exactly two colons here, and is now any string with the prefix; a non-string lineage item was a `TypeError` here, and is now ignored. Closed. |
 | DEF-46 | Resolved at `18be70f` (7, and 10.1 step 7.1): "For `lang = "formula"` this does not include the formula rules of 15.6 (`order` present, the body the print of its AST, `inputs` derived): those are `define`'s and a formula evaluator's, and the formula codes are not verification codes." As implemented. Closed. |
 | DEF-47 | Resolved at `18be70f` (11, `slice` row): "It is a manifest exactly when it is an object with a `members` member; anything else is checked as a slice object (so `{"slice": …}` alone is `E_SCHEMA`, as a slice object without `args`)." My rule also took an object with `slice` as a manifest; the code was `E_SCHEMA` either way. The runner now uses the spec's rule. Closed. |
-| DEF-34 | Open again for `spec-0.4.0`: the tag does not exist yet. README and the packaging test name `spec-0.4.0`; the packaging test pins commit `18be70f`. Neither `dedd132` nor `18be70f` is yet on `github.com/datumesh-com/datumesh-spec` either (they were fetched from `/root/datumesh-spec`), so a fresh clone with `--recurse-submodules`, and CI, cannot check the submodule out until it is pushed. |
+| DEF-34 | Open again for `spec-0.4.0`: the tag does not exist yet. README and the packaging test name `spec-0.4.0`; the packaging test pins commit `f3d3e2c`. None of `dedd132`, `18be70f` and `f3d3e2c` is yet on `github.com/datumesh-com/datumesh-spec` either (they were fetched from `/root/datumesh-spec`), so a fresh clone with `--recurse-submodules`, and CI, cannot check the submodule out until it is pushed. |
 
 The changes of the revision, each implemented (SPEC 10.1, "What verifier libraries of `spec-0.4.0` must do"):
 
