@@ -488,7 +488,9 @@ def _check_page(env: Dict[str, Any], sources: Tuple[_Source, ...], req: _Request
         if m.get("superseded_by") == h:
             _bad("superseded_by is the receipt's own hash", f"{mp}.superseded_by")
         key = _key(sl, r["cell"]["args"])
-        if key is None or (previous is not None and not key > previous):
+        if key is None or (previous is not None and [t for t, _ in key] != [t for t, _ in previous]):
+            _bad("a member's key and the cursor or the previous member's key have other types", mp)
+        if previous is not None and not key > previous:
             _bad("members are in strictly ascending key order, after the cursor", mp)
         previous = key
         out.append(MemberResult(m["outcome"], m["trust"], h))
