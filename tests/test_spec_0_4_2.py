@@ -181,6 +181,30 @@ class EchoAndCodesTest(unittest.TestCase):
             with self.subTest(json.dumps(body)[:150], request=req):
                 self.assertEqual(ecode(base, body, status, req), want)
 
+    def test_echo_order(self) -> None:
+        # The echo against the pin comes after the status (step 3) and before the receipt is verified (step 4);
+        # the echo against the receipt's fn_hash after it. The reference tool's order (DEFECTS.md DEF-56).
+        bad = dict(RECEIPT, sig="0" * 128)
+        later = dict(RECEIPT, asof="2099-01-01T00:00:00.000000Z", issued="2099-01-01T00:00:00.000000Z")
+        b = json.loads(OKP["input"])
+        nopin = {k: x for k, x in OKP["request"].items() if k != "fn_hash"}
+        no_echo = {k: x for k, x in dict(b, receipt=bad).items() if k != "fn_hash"}
+        cases = [
+            (dict(b, receipt=bad, fn_hash=OTHER), 200, OKP["request"], "E_ENVELOPE"),
+            (no_echo, 200, OKP["request"], "E_ENVELOPE"),
+            (no_echo, 200, dict(OKP["request"], cell_id=OTHER), "E_ENVELOPE"),
+            (dict(b, receipt=later, fn_hash=OTHER), 200, OKP["request"], "E_ENVELOPE"),
+            ({k: x for k, x in b.items() if k != "fn_hash"}, 404, OKP["request"], "E_ENVELOPE"),
+            (dict(b, receipt=bad, fn_hash=OTHER), 200, nopin, "E_SIGNATURE"),
+            (dict(b, receipt=later, fn_hash=OTHER), 200, nopin, "E_KEY_NOT_VALID"),
+        ]
+        for body, status, req, want in cases:
+            with self.subTest(json.dumps(body)[:100], request=req):
+                res = check_envelope(status, json.dumps(body), env_keys(OKP["keys"]), req)
+                self.assertEqual(res.code, want)
+                if want == "E_ENVELOPE" and status == 200:
+                    self.assertEqual(res.path, "$.fn_hash")
+
     def test_echo_exposed(self) -> None:
         res = check_envelope(200, OKP["input"], env_keys(OKP["keys"]), OKP["request"])
         self.assertEqual((res.ok, res.fn_hash), (True, PIN))
