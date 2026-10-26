@@ -259,6 +259,13 @@ class SlicePageTest(unittest.TestCase):
             (dict(PB, members=PB["members"][:1] * 2), 200, req, E),
             (PB, 200, dict(req, after={"quote": {"type": "string", "value": "CHF"}}), E),
             (PB, 200, dict(req, after={"quote": {"type": "string", "value": "BRL"}}), "OK"),
+            # the cursor names the open arguments (other names are ignored, as by the reference tool) ...
+            (PB, 200, dict(req, after={"base": {"type": "string", "value": "A"}}), E),
+            (PB, 200, dict(req, after={"quote": {"type": "string", "value": "A"}, "x": {"type": "string",
+                                                                                     "value": "A"}}), "OK"),
+            # ... with the members' types: a cursor of another type orders nothing (the reference tool raises a
+            # TypeError on this input: DEFECTS.md DEF-55)
+            (PB, 200, dict(req, after={"quote": {"type": "number", "value": "1"}}), E),
             (PB, 200, dict(req, asof="2024-03-16T08:59:59.999999Z"), E),
             (PB, 200, dict(req, slice_id=OTHER), E),
         ]
