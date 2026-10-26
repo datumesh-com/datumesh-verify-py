@@ -29,7 +29,7 @@ class UriTest(unittest.TestCase):
                 self.assertEqual(parse_uri(format_uri(v["object"]), v["signature"]), v["object"])
                 n += 1
         self.assertEqual(n, 15)  # spec-0.4.2: four pinned URIs
-        self.assertEqual(len(vectors_of("uri", False)), 32)
+        self.assertEqual(len(vectors_of("uri", False)), 37)  # spec-0.4.2: five pin cases
 
     def test_invalid_vectors(self) -> None:
         for v in vectors_of("uri", False):

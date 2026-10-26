@@ -81,7 +81,7 @@ class PinTest(unittest.TestCase):
             (f"{BASE}&fn_hash={PIN[:-1]}", "E_CANON_HEX"),
             (f"{BASE}&fn_hash=", "E_CANON_HEX"),
             # the pin after the values, before asof
-            (f"cell://rates.example.org/fx_rate?base=EUR&date=2024-13-15&quote=USD&fn_hash=x", "E_CANON_DATE"),
+            ("cell://rates.example.org/fx_rate?base=EUR&date=2024-13-15&quote=USD&fn_hash=x", "E_CANON_DATE"),
             (f"{BASE}&fn_hash=x&asof=bad", "E_CANON_HEX"),
             (f"{BASE}&fn_hash={PIN}&asof=bad", "E_CANON_INSTANT"),
         ]
@@ -100,7 +100,7 @@ class PinTest(unittest.TestCase):
         with self.assertRaises(DatumeshError) as cm:
             canonicalize(cell, "cell")
         self.assertEqual(cm.exception.code, "E_CANON_ARG_NAME")
-        self.assertEqual(uri_code(f"cell://a.example/f?fn_hash=x&z=1", {"args": {"z": {"type": "number"}}}),
+        self.assertEqual(uri_code("cell://a.example/f?fn_hash=x&z=1", {"args": {"z": {"type": "number"}}}),
                          "E_CANON_ARG_ORDER")
 
 
