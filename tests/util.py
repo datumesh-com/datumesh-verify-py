@@ -29,7 +29,7 @@ def load_vectors() -> List[Dict[str, Any]]:
 
 #: Vector kinds for formula evaluators, not for verifier libraries (CONTRACT-0.4.0-libs item 9, SPEC 11 and
 #: 15): the runner skips them.
-FORMULA_KINDS = ("formula", "formula-eval", "excel", "decimal")
+FORMULA_KINDS = ("formula", "formula-eval", "excel", "decimal", "call")  # call: spec-0.4.2
 
 
 def verifier_vectors() -> List[Dict[str, Any]]:
@@ -73,7 +73,10 @@ OUTPUTS = {
     "receipt": ["canonical", "sha256", "sig", "level"],
     "unit": ["unit"],
     # envelope: outcome, and trust and receipt_hash only when the envelope carries a receipt
-    "envelope": ["outcome", "trust", "receipt_hash"],
+    # envelope: trust and receipt_hash when there is a receipt; results for a slice page (spec-0.4.2)
+    "envelope": ["outcome", "trust", "receipt_hash", "results"],
+    # batch (spec-0.4.2): results for a 200 batch, outcome for a refusal
+    "batch": ["results", "outcome"],
     # slice (spec-0.4.0): members_hash and entry only for a manifest
     "slice": ["canonical", "sha256", "slice_id", "members_hash", "entry"],
     # mesh (spec-0.4.1): bindings and endpoints, carried by the valid vectors since 3f79313 (DEF-48); the
@@ -83,7 +86,7 @@ OUTPUTS = {
 
 #: The known endpoints of SPEC 9.6.
 MESH_ENDPOINTS = ("blob", "cell", "cells", "descriptor", "explain", "find", "jobs", "manifest", "receipt", "slice",
-                  "verify")
+                  "verify", "versions")  # versions: spec-0.4.2
 
 
 def mesh_outputs(v: Dict[str, Any]) -> Dict[str, Any]:
@@ -103,6 +106,8 @@ def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
     if v["valid"]:
         for k in OUTPUTS[v["kind"]]:
             if v["kind"] == "envelope" and k != "outcome" and k not in v:
+                continue
+            if v["kind"] == "batch" and k not in v:
                 continue
             if v["kind"] == "slice" and k in ("members_hash", "entry") and k not in v:
                 continue

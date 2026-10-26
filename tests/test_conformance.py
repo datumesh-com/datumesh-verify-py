@@ -17,22 +17,25 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        # spec-0.4.1 (SPEC 14, 3f79313): 1037 vectors; 491 for verifier libraries, the rest for formula evaluators
-        self.assertEqual(sum(counts.values()), 1037, counts)
-        self.assertEqual(len(verifier_vectors()), 491, counts)
-        self.assertEqual(counts["mesh"], 30, counts)
-        self.assertEqual(sum(counts[k] for k in FORMULA_KINDS), 546, counts)
+        # spec-0.4.2 (SPEC 14): 1129 vectors; 555 for verifier libraries, the rest (call included) for
+        # implementations of the formula dialect
+        self.assertEqual(sum(counts.values()), 1129, counts)
+        self.assertEqual(len(verifier_vectors()), 555, counts)
+        self.assertEqual(counts["mesh"], 32, counts)
+        self.assertEqual(counts["batch"], 11, counts)
+        self.assertEqual(counts["call"], 27, counts)
+        self.assertEqual(sum(counts[k] for k in FORMULA_KINDS), 574, counts)
         self.assertEqual(counts["unit"], 13, counts)
-        self.assertEqual(counts["envelope"], 92, counts)
+        self.assertEqual(counts["envelope"], 130, counts)
         self.assertEqual(counts["slice"], 18, counts)
-        self.assertEqual(counts["function"], 48 + 16, counts)
+        self.assertEqual(counts["function"], 48 + 16 + 1, counts)  # spec-0.4.2: fn_hash reserved
         # 30 slice-lineage receipt vectors (13 valid, 17 invalid); invalid/receipt-slice is from spec-0.1
         lineage = [v for v in vectors_of("receipt") if v["id"].startswith(("receipt/slice-", "invalid/receipt-slice-"))]
         self.assertEqual((len(lineage), sum(v["valid"] for v in lineage)), (30, 13), counts)
         # every kind is one the runner knows (or skips)
         for v in load_vectors():
             self.assertIn(v["kind"], ("jcs", "scalar", "cell", "ref", "function", "uri", "keyid", "keys",
-                                      "receipt", "unit", "envelope", "slice", "mesh") + FORMULA_KINDS, v["id"])
+                                      "receipt", "unit", "envelope", "slice", "mesh", "batch") + FORMULA_KINDS, v["id"])
 
     def test_every_vector_in_process(self) -> None:
         run = runner().run_vector
@@ -139,10 +142,37 @@ class ConformanceTest(unittest.TestCase):
                     self.assertTrue(res.ok, res)
                     self.assertEqual((res.code, res.outcome, res.trust, res.receipt_hash, res.path),
                                      ("OK", v["outcome"], v.get("trust"), v.get("receipt_hash"), None))
+                    if "results" in v:  # a slice page (spec-0.4.2)
+                        self.assertEqual([{"outcome": m.outcome, "receipt_hash": m.receipt_hash, "trust": m.trust}
+                                          for m in res.members], v["results"])
                 else:
                     self.assertFalse(res.ok)
                     self.assertEqual(res.code, v["error"])
                     self.assertEqual((res.outcome, res.trust, res.receipt_hash), (None, None, None))
+
+    def test_batch_vectors_through_check_batch(self) -> None:
+        for v in vectors_of("batch"):
+            with self.subTest(v["id"]):
+                res = datumesh.check_batch(v["status"], v["input"], env_keys(v["keys"]), v["requests"])
+                self.assertIsInstance(res, datumesh.BatchResult)
+                if not v["valid"]:
+                    self.assertEqual((res.ok, res.code, res.items), (False, v["error"], ()))
+                    continue
+                self.assertTrue(res.ok, res)
+                if "outcome" in v:
+                    self.assertEqual((res.outcome, res.items), (v["outcome"], ()))
+                else:
+                    self.assertIsNone(res.outcome)
+                    got = []
+                    for item in res.items:
+                        if not item.ok:
+                            got.append({"error": item.code})
+                        else:
+                            d = {"outcome": item.outcome}
+                            if item.receipt_hash is not None:
+                                d.update(receipt_hash=item.receipt_hash, trust=item.trust)
+                            got.append(d)
+                    self.assertEqual(got, v["results"])
 
     def test_slice_vectors_through_the_api(self) -> None:
         for v in vectors_of("slice"):

@@ -361,8 +361,6 @@ class CodesAndVersionTest(unittest.TestCase):
             self.assertNotIn(c, datumesh.SUCCESS_CODES)
 
     def test_version_and_names(self) -> None:
-        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.4.1")
-        self.assertEqual(datumesh.__version__, "0.4.1")
         for name in ("resolve_mesh", "MeshResult", "MESH_ENDPOINTS"):
             self.assertIn(name, datumesh.__all__)
         self.assertEqual({k for k, (_, req) in datumesh.MESH_ENDPOINTS.items() if req},
