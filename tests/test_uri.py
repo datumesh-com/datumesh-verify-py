@@ -28,7 +28,7 @@ class UriTest(unittest.TestCase):
                 self.assertEqual(format_uri(ref), v["input"])
                 self.assertEqual(parse_uri(format_uri(v["object"]), v["signature"]), v["object"])
                 n += 1
-        self.assertEqual(n, 11)
+        self.assertEqual(n, 15)  # spec-0.4.2: four pinned URIs
         self.assertEqual(len(vectors_of("uri", False)), 32)
 
     def test_invalid_vectors(self) -> None:

@@ -230,7 +230,7 @@ class MeshVectorsTest(unittest.TestCase):
                     self.assertEqual((res.ok, res.code, res.bindings, res.endpoints, res.keys),
                                      (False, v["error"], None, {}, None))
                 n += 1
-        self.assertEqual(n, 30)
+        self.assertEqual(n, 32)  # spec-0.4.2: versions
 
     def test_unknown_members_dropped(self) -> None:
         res = resolve_mesh(HOST, KEYS_OK, ok(dict(MESH_DOC, x_status=5, endpoints=dict(MESH_DOC["endpoints"], x=[1]))))
@@ -355,7 +355,7 @@ class CodesAndVersionTest(unittest.TestCase):
     def test_codes(self) -> None:
         codes = datumesh.ERROR_CODES
         i = codes.index("E_ENVELOPE")
-        self.assertEqual(codes[i + 1:], ("E_JOB_UNKNOWN", "E_MESH_DOC"))
+        self.assertEqual(codes[i + 1:i + 3], ("E_JOB_UNKNOWN", "E_MESH_DOC"))
         for c in ("E_JOB_UNKNOWN", "E_MESH_DOC"):
             self.assertEqual(datumesh.DatumeshError(c).code, c)
             self.assertNotIn(c, datumesh.SUCCESS_CODES)
