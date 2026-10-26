@@ -402,6 +402,12 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
         _bad("a batch is refused whole only by a refusal outcome", f"{path}.outcome")
     if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
         _bad(f"HTTP status {status!r} does not match outcome {outcome!r}", "status" if path == "$" else path)
+    # the fn_hash echo against the pin (spec-0.4.2), before the receipt, as the reference tool orders it
+    if req.fn_hash is not None and req.kind != "none":
+        if "fn_hash" in env and env["fn_hash"] != req.fn_hash:
+            _bad("fn_hash echoes another function than the one pinned", f"{path}.fn_hash")
+        if "fn_hash" not in env and outcome not in ("rate_limited", "bad_request", "pending"):
+            _bad("an envelope answering a pinned request echoes its fn_hash", f"{path}.fn_hash")
     trust: Optional[str] = None
     h: Optional[str] = None
     r: Optional[Dict[str, Any]] = None
@@ -424,12 +430,7 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
             _bad("the pending envelope is for another job than the one polled", f"{path}.job")
     if env.get("error") == "E_JOB_UNKNOWN" and req.job is None:
         _bad("E_JOB_UNKNOWN answers a job URL only, not a /cell request", f"{path}.error")
-    # the fn_hash echo (spec-0.4.2)
-    if req.fn_hash is not None and req.kind != "none":
-        if "fn_hash" in env and env["fn_hash"] != req.fn_hash:
-            _bad("fn_hash echoes another function than the one pinned", f"{path}.fn_hash")
-        if "fn_hash" not in env and outcome not in ("rate_limited", "bad_request", "pending"):
-            _bad("an envelope answering a pinned request echoes its fn_hash", f"{path}.fn_hash")
+    # the fn_hash echo against the receipt (spec-0.4.2)
     if r is not None and "fn_hash" in env and env["fn_hash"] != r["cell"]["fn_hash"]:
         _bad("fn_hash echoes another function than the receipt's", f"{path}.fn_hash")
     # step 6
