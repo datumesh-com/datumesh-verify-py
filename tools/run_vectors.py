@@ -26,8 +26,13 @@ receipt vector's ``blob_hex`` is passed to ``verify`` as the blob content (step
 (absent: a failed retrieval) and outputs ``bindings`` and ``endpoints``. A slice vector's input is a manifest exactly when
 it is an object with a ``members`` member, else a slice object (SPEC 11).
 
-The kinds ``formula``, ``formula-eval``, ``excel`` and ``decimal`` (spec-0.4.0)
-are for formula evaluators, not verifier libraries: this library evaluates no
+A ``batch`` vector (spec-0.4.2) runs through ``check_batch`` and outputs ``results``
+(per item ``{outcome, receipt_hash?, trust?}`` or ``{error}``) for a 200, ``outcome``
+for a refusal; a slice page outputs ``results`` for its members.
+
+The kinds ``formula``, ``formula-eval``, ``excel``, ``decimal`` (spec-0.4.0) and
+``call`` (spec-0.4.2) are for implementations of the formula dialect, not verifier
+libraries: this library evaluates no
 function. They are skipped, with the line ``{"id": ..., "error": null,
 "skipped": <kind>}``.
 
@@ -50,7 +55,7 @@ except ImportError:  # running from a source checkout
 
 MESH = "mesh.example"
 #: Vector kinds for formula evaluators (SPEC 11, 15): skipped.
-FORMULA_KINDS = ("formula", "formula-eval", "excel", "decimal")
+FORMULA_KINDS = ("formula", "formula-eval", "excel", "decimal", "call")  # call: spec-0.4.2
 
 
 def _env_keys(host: str, env: Dict[str, Any]) -> datumesh.KeysResult:
@@ -160,6 +165,27 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
                 out["outcome"] = env.outcome
                 if env.receipt_hash is not None:
                     out.update(trust=env.trust, receipt_hash=env.receipt_hash)
+                if "slice_id" in v["request"] and env.outcome == "ok":  # a slice page (spec-0.4.2)
+                    out["results"] = [{"outcome": m.outcome, "receipt_hash": m.receipt_hash, "trust": m.trust}
+                                      for m in env.members]
+        elif kind == "batch":  # spec-0.4.2
+            keys = [_env_keys(h, e) for h, e in (v.get("keys") or {}).items()]
+            res = datumesh.check_batch(v["status"], _input(v), keys, v["requests"])
+            if not res.ok:
+                out["error"] = res.code
+            elif res.outcome is not None:
+                out["outcome"] = res.outcome
+            else:
+                results = []
+                for item in res.items:
+                    if not item.ok:
+                        results.append({"error": item.code})
+                    else:
+                        r: Dict[str, Any] = {"outcome": item.outcome}
+                        if item.receipt_hash is not None:
+                            r.update(receipt_hash=item.receipt_hash, trust=item.trust)
+                        results.append(r)
+                out["results"] = results
         else:
             out["error"] = f"UNSUPPORTED_KIND:{kind}"
     except datumesh.DatumeshError as e:

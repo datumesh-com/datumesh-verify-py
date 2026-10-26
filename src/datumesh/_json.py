@@ -125,6 +125,21 @@ def number_texts(data: JSONText) -> Dict[str, str]:
     return {k: str(v) for k, v in value.items() if isinstance(v, NumberText)}
 
 
+def number_tree(data: JSONText) -> Any:
+    """The value of JSON text that :func:`parse_json` has already accepted, with every number kept as its
+    source text (a :class:`NumberText`), at every depth. Batch items and slice members (spec-0.4.2) hold
+    integer members whose writing SPEC 5.5 constrains."""
+    text = bytes(data).decode("utf-8") if isinstance(data, (bytes, bytearray, memoryview)) else data
+    return json.loads(text, parse_float=NumberText, parse_int=NumberText, parse_constant=_constant)
+
+
+def numbers_of(tree: Any) -> Dict[str, str]:
+    """The source text of each top-level member of an object of :func:`number_tree` that is a number."""
+    if not isinstance(tree, dict):
+        return {}
+    return {k: str(v) for k, v in tree.items() if isinstance(v, NumberText)}
+
+
 def check_json_value(value: Any, path: str = "$") -> None:
     """Check that an already-parsed value is I-JSON: dict/list/str/float/int/bool/None only,
     string keys, no lone surrogates, finite numbers within the double range, and at most

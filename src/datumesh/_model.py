@@ -255,12 +255,12 @@ def _cell_like_structure(v: Any, path: str, with_hash: bool) -> None:
     if with_hash:
         require_object(v, path, ("args", "fn", "fn_hash", "ns"))
     else:
-        require_object(v, path, ("args", "fn", "ns"), ("asof",))
+        require_object(v, path, ("args", "fn", "ns"), ("asof", "fn_hash"))  # fn_hash: a pin (spec-0.4.2)
     _args_structure(v["args"], _child(path, "args"))
     if not with_hash and "asof" in v:
         require_string(v["asof"], _child(path, "asof"), "asof")
     require_string(v["fn"], _child(path, "fn"), "fn")
-    if with_hash:
+    if "fn_hash" in v:
         require_string(v["fn_hash"], _child(path, "fn_hash"), "fn_hash")
     require_string(v["ns"], _child(path, "ns"), "ns")
 
@@ -270,7 +270,7 @@ def _cell_like_canonical(v: Dict[str, Any], path: str, with_hash: bool) -> None:
     if not with_hash and "asof" in v:
         lx.check_instant(v["asof"], _child(path, "asof"))
     lx.check_name(v["fn"], _child(path, "fn"))
-    if with_hash:
+    if "fn_hash" in v:
         lx.check_hex(v["fn_hash"], 64, _child(path, "fn_hash"))
     lx.check_namespace(v["ns"], _child(path, "ns"))
     lx.check_function_name_length(v["ns"], v["fn"], path)

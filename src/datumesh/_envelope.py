@@ -1,45 +1,66 @@
-"""Response envelopes (SPEC.md 5.5): the mesh's unsigned statement around a receipt."""
+"""Response envelopes (SPEC.md 5.5), slice pages (5.6) and batches (5.7): the mesh's unsigned statements
+around receipts."""
 
 from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
-from typing import Any, Dict, Mapping, NoReturn, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Mapping, NoReturn, Optional, Sequence, Tuple, Union
 
 from . import _lexical as lx
+from . import _model
 from . import _units
 from ._errors import ERROR_CODES, FAULT_CODES, DatumeshError, fail
-from ._json import jcs_bytes, number_texts, parse_json
-from ._keys import key_sources
+from ._json import jcs_bytes, number_tree, numbers_of, parse_json
+from ._keys import _Source, key_sources
 from ._verify import _signed
 
 #: outcome -> (HTTP statuses, required members, optional members), SPEC 5.5.
 OUTCOMES: Dict[str, Tuple[range, Tuple[str, ...], Tuple[str, ...]]] = {
-    "ok": (range(200, 201), ("receipt", "trust"), ("superseded_by", "reason")),
-    "stale": (range(200, 201), ("receipt", "trust", "age_seconds"), ("superseded_by", "reason")),
-    "not_covered": (range(404, 405), (), ("fault",)),
-    "unlicensed": (range(403, 404), (), ()),
-    "payment_required": (range(402, 403), ("quote",), ()),
-    "rate_limited": (range(429, 430), ("retry_after_seconds",), ()),
-    "bad_request": (range(400, 401), ("error",), ()),
-    "error": (range(500, 600), ("error",), ()),
+    "ok": (range(200, 201), ("receipt", "trust"), ("superseded_by", "reason", "fn_hash")),
+    "stale": (range(200, 201), ("receipt", "trust", "age_seconds"), ("superseded_by", "reason", "fn_hash")),
+    "not_covered": (range(404, 405), (), ("fault", "error", "fn_hash")),
+    "unlicensed": (range(403, 404), (), ("fn_hash",)),
+    "payment_required": (range(402, 403), ("quote",), ("fn_hash",)),
+    "rate_limited": (range(429, 430), ("retry_after_seconds",), ("fn_hash",)),
+    "bad_request": (range(400, 401), ("error",), ("fn_hash",)),
+    "error": (range(500, 600), ("error",), ("fn_hash",)),
     "pending": (range(202, 203), ("estimate_seconds", "job", "poll", "request"), ()),  # spec-0.4.1
 }
-#: Codes a bad_request may carry: the codes parse can raise (SPEC 5.4, 5.5).
+#: A page of the slice endpoint (SPEC 5.6, spec-0.4.2): an ``ok`` with these members instead.
+PAGE_MEMBERS: Tuple[Tuple[str, ...], Tuple[str, ...]] = (("members", "slice"), ("next", "fn_hash"))
+#: Codes a bad_request may carry: the codes parse can raise (SPEC 5.4, 5.5), E_CANON_HEX (a pin) and
+#: E_SLICE_AT_CELL since spec-0.4.2. E_JOB_UNKNOWN too, bound to a job URL in step 5.
 BAD_REQUEST_CODES = frozenset((
     "E_PARSE_URI", "E_CANON_NAME", "E_CANON_ARG_NAME", "E_CANON_ARG_DUPLICATE", "E_CANON_ARG_ORDER",
     "E_CANON_PERCENT", "E_CANON_TYPE", "E_CANON_NUMBER", "E_CANON_DATE", "E_CANON_INSTANT", "E_CANON_STRING",
-    "E_CANON_BLOB", "E_CANON_LIMIT", "E_ARG_UNKNOWN", "E_ARG_MISSING"))
-#: Codes an error may carry: every code of SPEC 10.2 but E_ENVELOPE, which is a client's, and E_JOB_UNKNOWN
-#: (spec-0.4.1), which is a bad_request's at a job URL.
-ERROR_OUTCOME_CODES = frozenset(c for c in ERROR_CODES if c not in ("E_ENVELOPE", "E_JOB_UNKNOWN"))
+    "E_CANON_BLOB", "E_CANON_LIMIT", "E_ARG_UNKNOWN", "E_ARG_MISSING", "E_CANON_HEX", "E_SLICE_AT_CELL"))
+#: Codes an error may carry: every code of SPEC 10.2 but E_ENVELOPE, which is a client's, and the request
+#: codes E_JOB_UNKNOWN (spec-0.4.1), E_SLICE_AT_CELL and E_NAME_UNBOUND (spec-0.4.2).
+ERROR_OUTCOME_CODES = frozenset(c for c in ERROR_CODES
+                                if c not in ("E_ENVELOPE", "E_JOB_UNKNOWN", "E_SLICE_AT_CELL", "E_NAME_UNBOUND"))
+#: The outcomes that refuse a whole batch (SPEC 5.7).
+REFUSALS = ("unlicensed", "payment_required", "rate_limited", "bad_request", "error")
 _INTEGER = re.compile(r"0|[1-9][0-9]*")
 JOB = re.compile(r"[0-9a-f]{32,64}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 _URL_REST = re.compile(r"[!-~]+")
 LIMIT_POLL = 512
-TRUST = ("primary", "verified", "unverified")
+LIMIT_NEXT = 512
+#: The trust values (SPEC 5.5); ``computed`` since spec-0.4.2.
+TRUST = ("primary", "verified", "unverified", "computed")
 MAX_SECONDS = 2 ** 53 - 1
+
+
+@dataclass(frozen=True)
+class MemberResult:
+    """One member of a slice page (SPEC 5.6, spec-0.4.2): its outcome (``ok`` or ``stale``), trust label and
+    receipt hash."""
+
+    outcome: str
+    trust: str
+    receipt_hash: str
 
 
 @dataclass(frozen=True)
@@ -57,7 +78,10 @@ class EnvelopeResult:
     cell is computed and its evaluation faulted, so it has no value, which is not
     missing data; else None. ``job``, ``estimate_seconds`` and ``poll`` (spec-0.4.1):
     for a ``pending`` envelope, the job id, the mesh's estimate in seconds and the URL
-    to poll; else None.
+    to poll; else None. Since spec-0.4.2: ``fn_hash``, the function hash the envelope
+    echoes (or None); ``error``, the code an ``error``, ``bad_request`` or ``not_covered``
+    envelope carries (``E_NAME_UNBOUND`` for the last); and for a page of the slice
+    endpoint, ``members`` (a :class:`MemberResult` per member, in order) and ``next``.
     """
 
     ok: bool
@@ -71,6 +95,41 @@ class EnvelopeResult:
     job: Optional[str] = None
     estimate_seconds: Optional[int] = None
     poll: Optional[str] = None
+    fn_hash: Optional[str] = None
+    error: Optional[str] = None
+    members: Tuple[MemberResult, ...] = ()
+    next: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class BatchResult:
+    """The outcome of :func:`check_batch` (SPEC 5.7, spec-0.4.2).
+
+    ``ok``: the response passed as a whole. ``code``: ``"OK"`` or the whole response's first failure.
+    For a 200 response, ``items`` has one :class:`EnvelopeResult` per request, in order; each is ok or
+    reports its own failure, which does not fail the others; ``outcome`` is None. For a refusal of the
+    whole batch, ``outcome`` is its outcome and ``items`` is empty. ``detail`` and ``path`` as for an
+    envelope.
+    """
+
+    ok: bool
+    code: str
+    outcome: Optional[str]
+    items: Tuple[EnvelopeResult, ...]
+    detail: str
+    path: Optional[str]
+
+
+@dataclass(frozen=True)
+class _Request:
+    kind: str  # "cell", "slice", or "none" (a refusal of a whole batch: nothing to bind)
+    target: Optional[str] = None  # cell_id or slice_id
+    asof: Optional[str] = None
+    job: Optional[str] = None
+    fn_hash: Optional[str] = None
+    mesh: Optional[str] = None
+    after: Optional[Dict[str, Any]] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 
 def _bad(detail: str, path: str) -> NoReturn:
@@ -107,50 +166,77 @@ def _quote(q: Any, path: str) -> None:
         _bad("currency is a currency code from units.md", f"{path}.currency")
 
 
-def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
-    """Step 2: the members against the table and rules of SPEC 5.5. ``numbers`` holds the source
-    text of the top-level members that are JSON numbers."""
+def _url_host(v: Any, limit: int, name: str, path: str) -> str:
+    """``https://``, a DNS name, then a path (``/`` and printable ASCII), at most ``limit`` characters.
+    Returns the host."""
+    if not isinstance(v, str) or len(v) > limit or not v.startswith("https://") or not _URL_REST.fullmatch(v[8:]):
+        _bad(f"{name} is https:// followed by printable ASCII, at most {limit} characters", path)
+    host, slash, _ = v[8:].partition("/")
+    try:
+        lx.check_dns_name(host, path)
+    except DatumeshError:
+        _bad(f"{name}'s host (between https:// and the next /) is a DNS name (SPEC 2.1): no port, userinfo, "
+             "IP address or query", path)
+    if not slash:
+        _bad(f"{name} has a path after its host", path)
+    return host
+
+
+def _members(env: Any, numbers: Dict[str, str], path: str, at_slice: bool, member: bool = False) -> Dict[str, Any]:
+    """Step 2: the members against the table and rules of SPEC 5.5 (and 5.6 at the slice endpoint, where
+    ``ok`` is a page; ``member``: a page's member, an ``ok`` or ``stale`` envelope). ``numbers`` holds the
+    source text of the top-level members that are JSON numbers."""
     if not isinstance(env, dict):
-        _bad("an envelope is a JSON object", "$")
+        _bad("an envelope is a JSON object", path)
     if "outcome" not in env:
-        _bad("missing member 'outcome'", "$")
+        _bad("missing member 'outcome'", path)
     outcome = env["outcome"]
     if not isinstance(outcome, str) or outcome not in OUTCOMES:
-        _bad(f"outcome is one of {', '.join(OUTCOMES)}", "$.outcome")
-    _, required, optional = OUTCOMES[outcome]
+        _bad(f"outcome is one of {', '.join(OUTCOMES)}", f"{path}.outcome")
+    if member and outcome not in ("ok", "stale"):
+        _bad("a slice member is an ok or stale envelope", path)
+    if at_slice and not member and outcome in ("stale", "pending"):
+        _bad(f"{outcome} is not an answer of the slice endpoint", f"{path}.outcome")
+    if at_slice and not member and outcome == "ok":
+        required, optional = PAGE_MEMBERS
+    else:
+        _, required, optional = OUTCOMES[outcome]
     allowed = {"outcome", *required, *optional}
     for name in sorted(env):
         if name not in allowed:
-            _bad(f"member {name!r} is not allowed with outcome {outcome!r}", f"$.{name}")
+            _bad(f"member {name!r} is not allowed with outcome {outcome!r}", f"{path}.{name}")
     for name in sorted(required):
         if name not in env:
-            _bad(f"outcome {outcome!r} requires member {name!r}", "$")
+            _bad(f"outcome {outcome!r} requires member {name!r}", path)
     if "reason" in env and "superseded_by" not in env:
-        _bad("reason is only present with superseded_by", "$.reason")
+        _bad("reason is only present with superseded_by", f"{path}.reason")
+    if "fault" in env and "error" in env:
+        _bad("not_covered carries fault or error, not both", f"{path}.error")
     for name in sorted(env):  # JCS order (all names are ASCII)
-        v, p = env[name], f"$.{name}"
+        v, p = env[name], f"{path}.{name}"
         if name in ("age_seconds", "retry_after_seconds", "estimate_seconds"):
             _seconds(v, numbers.get(name), p)
         elif name == "error":
-            # E_JOB_UNKNOWN in bad_request is bound to a job URL in step 5
-            allowed_codes = BAD_REQUEST_CODES | {"E_JOB_UNKNOWN"} if outcome == "bad_request" else ERROR_OUTCOME_CODES
+            if outcome == "bad_request":
+                allowed_codes = BAD_REQUEST_CODES | {"E_JOB_UNKNOWN"}
+            elif outcome == "not_covered":
+                allowed_codes = frozenset(("E_NAME_UNBOUND",))
+            else:
+                allowed_codes = ERROR_OUTCOME_CODES
             if not isinstance(v, str) or v not in allowed_codes:
-                _bad("bad_request carries a code parse can raise (SPEC 5.4), or E_JOB_UNKNOWN" if outcome == "bad_request"
-                     else "error is a code from SPEC 10.2 other than E_ENVELOPE and E_JOB_UNKNOWN", p)
+                _bad(f"{outcome} does not carry error {v!r} (SPEC 5.5)", p)
+        elif name == "fn_hash":
+            if not isinstance(v, str) or not _HEX64.fullmatch(v):
+                _bad("fn_hash is 64 lowercase hex digits", p)
         elif name == "job":
             if not isinstance(v, str) or not JOB.fullmatch(v):
                 _bad("job is 32 to 64 lowercase hex digits", p)
         elif name == "poll":
-            if (not isinstance(v, str) or len(v) > LIMIT_POLL or not v.startswith("https://")
-                    or not _URL_REST.fullmatch(v[8:])):
-                _bad(f"poll is https:// followed by printable ASCII, at most {LIMIT_POLL} characters", p)
-            try:
-                lx.check_dns_name(v[8:].split("/", 1)[0], p)
-            except DatumeshError:
-                _bad("poll's host (between https:// and the next /) is a DNS name (SPEC 2.1): no port, userinfo, "
-                     "IP address or query; whether it is the host asked is the client's HTTP layer's check", p)
+            _url_host(v, LIMIT_POLL, "poll", p)
             if not v.endswith("/jobs/" + str(env.get("job"))):
                 _bad("poll ends /jobs/<job> with this envelope's job", p)
+        elif name == "next":
+            _url_host(v, LIMIT_NEXT, "next", p)
         elif name == "request":
             _echoed_request(v, p)
         elif name == "fault":
@@ -168,6 +254,9 @@ def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
         elif name == "receipt":
             if not isinstance(v, dict):
                 _bad("receipt is a receipt object", p)
+        elif name == "slice":
+            if not isinstance(v, dict):
+                _bad("slice is a slice object", p)
         elif name == "superseded_by":
             if not isinstance(v, str):
                 _bad("superseded_by is a receipt hash", p)
@@ -182,21 +271,34 @@ def _members(env: Any, numbers: Dict[str, str]) -> Dict[str, Any]:
     return out
 
 
+def _page_members(env: Dict[str, Any], tree: Any, path: str) -> None:
+    """Step 1 of SPEC 5.6 for a page's members: an array of ok or stale envelopes."""
+    members = env["members"]
+    if not isinstance(members, list):
+        _bad("members is an array of envelopes", f"{path}.members")
+    trees = tree.get("members") if isinstance(tree, dict) else None
+    for i, m in enumerate(members):
+        mt = trees[i] if isinstance(trees, list) and i < len(trees) else None
+        _members(m, numbers_of(mt), f"{path}.members[{i}]", True, member=True)
+
+
 def _echoed_request(v: Any, path: str) -> None:
-    """A pending envelope's ``request`` (spec-0.4.1): exactly ``cell_id`` (64 lowercase hex) and an optional
-    ``asof`` (an instant)."""
-    if not isinstance(v, dict) or "cell_id" not in v or not set(v) <= {"cell_id", "asof"}:
-        _bad("request has exactly cell_id and, when the request carried one, asof", path)
+    """A pending envelope's ``request``: exactly ``cell_id`` (64 lowercase hex), an optional ``asof`` (an
+    instant) and since spec-0.4.2 an optional ``fn_hash`` (the pin)."""
+    if not isinstance(v, dict) or "cell_id" not in v or not set(v) <= {"cell_id", "asof", "fn_hash"}:
+        _bad("request has exactly cell_id and, when the request carried them, asof and fn_hash", path)
+    for k in sorted(v):
+        if not isinstance(v[k], str):
+            _bad(f"request.{k} is a string", path)
     try:
-        if not isinstance(v["cell_id"], str):
-            raise DatumeshError("E_CANON_HEX", "not a string")
         lx.check_hex(v["cell_id"], 64, None)
         if "asof" in v:
-            if not isinstance(v["asof"], str):
-                raise DatumeshError("E_CANON_INSTANT", "not a string")
             lx.check_instant(v["asof"], None)
+        if "fn_hash" in v:
+            lx.check_hex(v["fn_hash"], 64, None)
     except DatumeshError as e:
-        _bad(f"request.cell_id is 64 lowercase hex digits and request.asof an instant ({e.code})", path)
+        _bad(f"request.cell_id and request.fn_hash are 64 lowercase hex digits and request.asof an instant "
+             f"({e.code})", path)
 
 
 def _is_primary(r: Dict[str, Any]) -> bool:
@@ -204,53 +306,237 @@ def _is_primary(r: Dict[str, Any]) -> bool:
     return r["computed_by"].partition("#")[0] == lx.host_of(r["cell"]["ns"]) and not r["inputs"]
 
 
-def _check_request(request: Any) -> Tuple[str, Optional[str], Optional[str]]:
-    if not isinstance(request, Mapping):
-        raise TypeError('request must be {"cell_id": <hex>, "asof": <instant> (optional), "job": <id> (optional)}')
-    if not set(request) <= {"cell_id", "asof", "job"} or "cell_id" not in request:
-        raise ValueError('request has cell_id, and optionally asof and job, nothing else')
-    cell_id, asof, job = request["cell_id"], request.get("asof"), request.get("job")
-    if not isinstance(cell_id, str) or ("asof" in request and not isinstance(asof, str)) \
-            or ("job" in request and not isinstance(job, str)):
-        raise TypeError("request cell_id, asof and job are strings")
+def _check_trust(trust: str, r: Dict[str, Any], mesh: Optional[str], path: str) -> None:
+    """Step 6 (SPEC 5.5): primary exactly when the receipt is primary; computed, verified and unverified only
+    for a receipt that is not; with the mesh asked known, computed exactly when that mesh signed it."""
+    primary = _is_primary(r)
+    if (trust == "primary") != primary:
+        _bad("trust is primary exactly when the signer's host is the namespace's host and there are no "
+             "inputs", path)
+    if not primary and mesh is not None:
+        signer = r["computed_by"].partition("#")[0]
+        if (trust == "computed") != (signer == mesh):
+            _bad("with the mesh asked known, trust is computed exactly when that mesh signed a receipt that is not "
+                 "primary; verified and unverified are another signer's", path)
+
+
+def _verify_receipt(v: Dict[str, Any], sources: Tuple[_Source, ...], path: str) -> Tuple[Dict[str, Any], str]:
     try:
-        lx.check_hex(cell_id, 64, "request.cell_id")
+        return _signed(v, sources)
+    except DatumeshError as e:
+        p = e.path
+        if p is not None and p.startswith("$"):
+            p = path + p[1:]
+        raise DatumeshError(e.code, e.detail, p) from None
+
+
+_REQUEST_HELP = ('request is {"cell_id", "asof"?, "job"?, "fn_hash"?, "mesh"?}, or for the slice endpoint '
+                 '{"slice_id", "asof"?, "fn_hash"?, "mesh"?, "after"?}')
+
+
+def _check_request(request: Any) -> _Request:
+    """A request description (SPEC 5.5, 5.6). A malformed one is the caller's error: TypeError or ValueError."""
+    if not isinstance(request, Mapping):
+        raise TypeError(_REQUEST_HELP)
+    if "slice_id" in request:
+        kind, target_name, allowed = "slice", "slice_id", {"slice_id", "asof", "fn_hash", "mesh", "after"}
+    else:
+        kind, target_name, allowed = "cell", "cell_id", {"cell_id", "asof", "job", "fn_hash", "mesh"}
+    if target_name not in request or not set(request) <= allowed:
+        raise ValueError(_REQUEST_HELP)
+    for k in sorted(set(request) - {"after"}):
+        if not isinstance(request[k], str):
+            raise TypeError(f"request {k} is a string")
+    target, asof, job = request[target_name], request.get("asof"), request.get("job")
+    fn_hash, mesh, after = request.get("fn_hash"), request.get("mesh"), request.get("after")
+    try:
+        lx.check_hex(target, 64, f"request.{target_name}")
         if asof is not None:
             lx.check_instant(asof, "request.asof")
+        if fn_hash is not None:
+            lx.check_hex(fn_hash, 64, "request.fn_hash")
+        if mesh is not None:
+            lx.check_dns_name(mesh, "request.mesh")
+        if "after" in request:
+            if not isinstance(after, dict) or not after:
+                raise ValueError("request after is an object from open argument names to typed scalars")
+            for name in sorted(after):
+                lx.check_arg_name(name, f"request.after.{name}")
+                _model.validate_scalar(after[name], f"request.after.{name}")
     except DatumeshError as e:
         raise ValueError(f"invalid request: {e}") from None
     if job is not None and not JOB.fullmatch(job):
         raise ValueError("invalid request: job is 32 to 64 lowercase hex digits")
-    return cell_id, asof, job
+    return _Request(kind, target, asof, job, fn_hash, mesh, after)
+
+
+def _key(slice_obj: Dict[str, Any], args: Dict[str, Any]) -> Optional[Tuple[Any, ...]]:
+    """A member's key (SPEC 15.13): its open (or ranged) arguments in ascending name order, each in its
+    type's order (booleans false before true). None when ``args`` lacks one of them or has another type."""
+    out: List[Any] = []
+    sargs = slice_obj["args"] if "args" in slice_obj else {}
+    for name in _model._sorted(sargs):
+        s = sargs[name]
+        if s != _model.SLICE and "value" in s:
+            continue
+        a = args.get(name)
+        if not isinstance(a, dict) or "type" not in a or "value" not in a:
+            return None
+        t = a["type"]
+        if s != _model.SLICE and t != s.get("type"):
+            return None
+        out.append((t, a["value"] if t == "boolean" else lx.order_key(t, a["value"])))
+    return tuple(out)
+
+
+def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ...], req: _Request,
+                  path: str = "$", outcomes: Optional[Tuple[str, ...]] = None) -> EnvelopeResult:
+    """Steps 2-6 of SPEC 5.5 (and 5.6 at the slice endpoint) on a parsed envelope. Raises DatumeshError."""
+    at_slice = req.kind == "slice"
+    env = _members(env_v, numbers_of(tree), path, at_slice)
+    outcome = env["outcome"]
+    page = at_slice and outcome == "ok"
+    if page:
+        _page_members(env, tree, path)
+    if outcomes is not None and outcome not in outcomes:
+        _bad("a batch is refused whole only by a refusal outcome", f"{path}.outcome")
+    if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
+        _bad(f"HTTP status {status!r} does not match outcome {outcome!r}", "status" if path == "$" else path)
+    trust: Optional[str] = None
+    h: Optional[str] = None
+    r: Optional[Dict[str, Any]] = None
+    if "receipt" in env:  # step 4
+        r, h = _verify_receipt(env["receipt"], sources, f"{path}.receipt")
+    # step 5: the answer answers the request
+    if req.kind == "cell" and r is not None:
+        if hashlib.sha256(jcs_bytes(r["cell"])).hexdigest() != req.target:
+            _bad("the receipt's cell is not the cell requested", f"{path}.receipt.cell")
+        # ok and stale alike: the receipt's asof at or before the requested one (D31); none requested: any
+        if req.asof is not None and r["asof"] > req.asof:
+            _bad(f"the {outcome} receipt answers as of {r['asof']}, after the requested {req.asof}",
+                 f"{path}.receipt.asof")
+    if outcome == "pending" and req.kind == "cell":
+        echo = env["request"]
+        if echo["cell_id"] != req.target or echo.get("asof") != req.asof or echo.get("fn_hash") != req.fn_hash:
+            _bad("the pending envelope echoes another request (cell_id; asof and fn_hash present exactly when "
+                 "requested, and equal)", f"{path}.request")
+        if req.job is not None and env["job"] != req.job:
+            _bad("the pending envelope is for another job than the one polled", f"{path}.job")
+    if env.get("error") == "E_JOB_UNKNOWN" and req.job is None:
+        _bad("E_JOB_UNKNOWN answers a job URL only, not a /cell request", f"{path}.error")
+    # the fn_hash echo (spec-0.4.2)
+    if req.fn_hash is not None and req.kind != "none":
+        if "fn_hash" in env and env["fn_hash"] != req.fn_hash:
+            _bad("fn_hash echoes another function than the one pinned", f"{path}.fn_hash")
+        if "fn_hash" not in env and outcome not in ("rate_limited", "bad_request", "pending"):
+            _bad("an envelope answering a pinned request echoes its fn_hash", f"{path}.fn_hash")
+    if r is not None and "fn_hash" in env and env["fn_hash"] != r["cell"]["fn_hash"]:
+        _bad("fn_hash echoes another function than the receipt's", f"{path}.fn_hash")
+    # step 6
+    if r is not None:
+        trust = env["trust"]
+        _check_trust(trust, r, req.mesh, f"{path}.trust")
+        if env.get("superseded_by") == h:
+            _bad("superseded_by is the receipt's own hash", f"{path}.superseded_by")
+    if outcome == "pending" and req.mesh is not None and _url_host(env["poll"], LIMIT_POLL, "poll", "") != req.mesh:
+        _bad("poll is on another host than the mesh asked", f"{path}.poll")
+    members: Tuple[MemberResult, ...] = ()
+    if page:
+        members = _check_page(env, sources, req, path)
+    fault, error = env.get("fault"), env.get("error")
+    detail = "well-formed envelope" + ("; receipt signature-valid" if h else "") + (
+        f"; evaluation fault {fault}" if fault else "") + (f"; job {env['job']}" if outcome == "pending" else "") + (
+        f"; a page of {len(members)} members" if page else "")
+    if outcome == "pending":
+        return EnvelopeResult(True, "OK", outcome, None, None, detail, None, None, env["job"],
+                              int(numbers_of(tree)["estimate_seconds"]), env["poll"])
+    return EnvelopeResult(True, "OK", outcome, trust, h, detail, None, fault, None, None, None, env.get("fn_hash"),
+                          error, members, env.get("next"))
+
+
+def _check_page(env: Dict[str, Any], sources: Tuple[_Source, ...], req: _Request, path: str) -> Tuple[MemberResult, ...]:
+    """Steps 2-3 of SPEC 5.6 for a page whose members' shapes are checked."""
+    sl = env["slice"]
+    if hashlib.sha256(jcs_bytes(sl)).hexdigest() != req.target:
+        _bad("the page is of another slice than the one requested", f"{path}.slice")
+    try:
+        _model.validate_slice(sl, f"{path}.slice")
+    except DatumeshError as e:
+        _bad(f"slice is a slice object ({e.code})", f"{path}.slice")
+    if "next" in env and req.mesh is not None and _url_host(env["next"], LIMIT_NEXT, "next", "") != req.mesh:
+        _bad("next is on another host than the mesh asked", f"{path}.next")
+    slice_hash = sl["cell"]["fn_hash"] if _model.is_version_slice(sl) else sl["fn_hash"]
+    if "fn_hash" in env and env["fn_hash"] != slice_hash:
+        _bad("fn_hash echoes another function than the slice's", f"{path}.fn_hash")
+    previous: Optional[Tuple[Any, ...]] = None
+    if req.after is not None:
+        previous = _key(sl, req.after)
+        if previous is None:
+            _bad("after does not name the slice's open arguments with their types", "request.after")
+    out: List[MemberResult] = []
+    for i, m in enumerate(env["members"]):
+        mp = f"{path}.members[{i}]"
+        r, h = _verify_receipt(m["receipt"], sources, f"{mp}.receipt")
+        why = _model.member_of(sl, r)
+        if why is not None:
+            _bad(f"the member is not a cell of the slice: {why}", f"{mp}.receipt.cell")
+        if req.asof is not None and r["asof"] > req.asof:
+            _bad(f"the member answers as of {r['asof']}, after the requested {req.asof}", f"{mp}.receipt.asof")
+        if "fn_hash" in m and m["fn_hash"] != r["cell"]["fn_hash"]:
+            _bad("fn_hash echoes another function than the receipt's", f"{mp}.fn_hash")
+        _check_trust(m["trust"], r, req.mesh, f"{mp}.trust")
+        if m.get("superseded_by") == h:
+            _bad("superseded_by is the receipt's own hash", f"{mp}.superseded_by")
+        key = _key(sl, r["cell"]["args"])
+        if key is None or (previous is not None and not key > previous):
+            _bad("members are in strictly ascending key order, after the cursor", mp)
+        previous = key
+        out.append(MemberResult(m["outcome"], m["trust"], h))
+    return tuple(out)
 
 
 def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], keys: Any,
-                   request: Mapping[str, str]) -> EnvelopeResult:
+                   request: Mapping[str, Any]) -> EnvelopeResult:
     """Check a mesh's response (SPEC 5.5): the HTTP ``status`` and the ``body`` (JSON text or bytes)
     against the ``request`` it answers.
 
-    ``request`` is ``{"cell_id": <hex>, "asof": <instant>, "job": <id>}``: the cell id (SPEC 4.4) of
-    the cell requested, that is the cell its URI denotes with the ``fn_hash`` you
-    resolved, and the ``asof`` of the request, omitted when the request had none.
+    ``request`` is ``{"cell_id": <hex>, "asof": <instant>, "job": <id>, "fn_hash": <hex>, "mesh": <host>}``:
+    the cell id (SPEC 4.4) of the cell requested, that is the cell its URI denotes with
+    the ``fn_hash`` you resolved (or pinned); the ``asof`` of the request, omitted when
+    the request had none; ``job`` when polling (below); ``fn_hash`` (spec-0.4.2) when the
+    request was pinned; and ``mesh`` (spec-0.4.2), optionally, the host you sent the
+    request to. For the slice endpoint (SPEC 5.6) it is ``{"slice_id", "asof"?,
+    "fn_hash"?, "mesh"?, "after"?}``, ``after`` the key of the last member already
+    received (open argument name to typed scalar).
 
     Steps, first failure reported: strict JSON (6.1); members against the table
     of 5.5 (``E_ENVELOPE``); the status matches the outcome (``E_ENVELOPE``); an
     embedded receipt is verified through step 6 of 10.1 with ``keys`` (the forms
     :func:`verify` takes) and keeps that procedure's codes; the receipt answers
     the request: same cell id, and when an ``asof`` was requested a receipt
-    ``asof`` at or before it, for ``ok`` and ``stale`` alike (``E_ENVELOPE``); then ``trust`` is checked against the receipt (``primary``
-    exactly when the signer's host is the namespace's host and there are no
-    inputs) and ``superseded_by`` must not be the receipt's own hash (``E_ENVELOPE``).
-    A ``not_covered`` envelope may carry ``fault``, a formula evaluation fault
-    (spec-0.4.0), exposed as ``EnvelopeResult.fault``.
+    ``asof`` at or before it, for ``ok`` and ``stale`` alike (``E_ENVELOPE``); the
+    ``fn_hash`` echo (a pinned request's answers carry the pin, except
+    ``rate_limited``, ``bad_request`` and ``pending``; with a receipt it is the
+    receipt's); then ``trust`` against the receipt (``primary`` exactly when the
+    signer's host is the namespace's host and there are no inputs; with ``mesh``,
+    ``computed`` exactly when that host signed it), ``superseded_by`` not the
+    receipt's own hash, and with ``mesh`` a ``poll`` on it (``E_ENVELOPE``).
+    Without ``mesh``, comparing ``computed`` and ``poll`` with the host asked is
+    your own check, to make before relying on them.
 
     Jobs (spec-0.4.1): a ``pending`` envelope (202) echoes the request; its
-    ``request`` must equal ``request`` (the same ``cell_id``, ``asof`` present
-    exactly when requested, and equal). When polling a job, pass the ORIGINAL
+    ``request`` must equal ``request`` (the same ``cell_id``, ``asof`` and ``fn_hash``
+    present exactly when requested, and equal). When polling a job, pass the ORIGINAL
     request with ``"job": <the job polled>``: a ``pending`` answer must then carry
     that job, a ``bad_request`` may carry ``E_JOB_UNKNOWN`` (without ``job`` it is
     ``E_ENVELOPE``), and any other answer is bound to the original ``cell_id`` and
     ``asof`` as above, never to the job URL.
+
+    Slice pages (SPEC 5.6): an ``ok`` answer is a page (``slice``, ``members``,
+    ``next``); every member is an ``ok`` or ``stale`` envelope whose receipt verifies
+    (10.1's codes), is a cell of the slice, answers as of the requested ``asof`` or
+    before, is labelled by the trust rules, and has a key after the previous member's
+    and after ``after``. ``stale`` and ``pending`` are not answers there.
 
     Never raises for an invalid envelope; raises TypeError for a body that is not
     text or bytes, keys of an unsupported type or a request that is not a mapping,
@@ -259,55 +545,59 @@ def check_envelope(status: Any, body: Union[str, bytes, bytearray, memoryview], 
     if not isinstance(body, (str, bytes, bytearray, memoryview)):
         raise TypeError(f"body must be JSON text or bytes, not {type(body).__name__}")
     sources = key_sources(keys)
-    want_cell, want_asof, want_job = _check_request(request)
+    req = _check_request(request)
     try:
         parsed = parse_json(body)
-        numbers = number_texts(body) if isinstance(parsed, dict) else {}
-        env = _members(parsed, numbers)
-        outcome = env["outcome"]
-        if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
-            _bad(f"HTTP status {status!r} does not match outcome {outcome!r}", "status")
-        trust: Optional[str] = None
-        h: Optional[str] = None
-        if "receipt" in env:
-            try:
-                r, h = _signed(env["receipt"], sources)
-            except DatumeshError as e:
-                path = e.path
-                if path is not None and path.startswith("$"):
-                    path = "$.receipt" + path[1:]
-                raise DatumeshError(e.code, e.detail, path) from None
-            if hashlib.sha256(jcs_bytes(r["cell"])).hexdigest() != want_cell:
-                _bad("the receipt's cell is not the cell requested", "$.receipt.cell")
-            # ok and stale alike: the receipt's asof at or before the requested one (D31, spec-0.3.0;
-            # canonical instants compare as strings, SPEC 3.3). No requested asof: any.
-            if want_asof is not None and r["asof"] > want_asof:
-                _bad(f"the {outcome} receipt answers as of {r['asof']}, after the requested {want_asof}",
-                     "$.receipt.asof")
-            trust = env["trust"]
-            if (trust == "primary") != _is_primary(r):
-                _bad("trust is primary exactly when the signer's host is the namespace's host and there are no "
-                     "inputs", "$.trust")
-            if env.get("superseded_by") == h:
-                _bad("superseded_by is the receipt's own hash", "$.superseded_by")
-        if outcome == "pending":
-            # step 5 for pending (spec-0.4.1): the echo is the request made, and the job is the one polled
-            echo = env["request"]
-            if echo["cell_id"] != want_cell:
-                _bad("the pending envelope echoes another cell than the one requested", "$.request.cell_id")
-            if echo.get("asof") != want_asof:
-                _bad("the pending envelope's echoed asof is not the requested asof (present exactly when "
-                     "requested, and equal)", "$.request")
-            if want_job is not None and env["job"] != want_job:
-                _bad("the pending envelope is for another job than the one polled", "$.job")
-        if env.get("error") == "E_JOB_UNKNOWN" and want_job is None:
-            _bad("E_JOB_UNKNOWN answers a job URL only, not a /cell request", "$.error")
-        fault = env.get("fault")
-        detail = "well-formed envelope" + ("; receipt signature-valid" if h else "") + (
-            f"; evaluation fault {fault}" if fault else "") + (f"; job {env['job']}" if outcome == "pending" else "")
-        if outcome == "pending":
-            return EnvelopeResult(True, "OK", outcome, None, None, detail, None, None, env["job"],
-                                  int(numbers["estimate_seconds"]), env["poll"])
-        return EnvelopeResult(True, "OK", outcome, trust, h, detail, None, fault)
+        return _check_parsed(status, parsed, number_tree(body), sources, req)
     except DatumeshError as e:
         return EnvelopeResult(False, e.code, None, None, None, e.detail, e.path)
+
+
+def check_batch(status: Any, body: Union[str, bytes, bytearray, memoryview], keys: Any,
+                requests: Sequence[Mapping[str, Any]]) -> BatchResult:
+    """Check a mesh's answer to a batch (SPEC 5.7, spec-0.4.2): ``POST <cells>`` with one request per item.
+
+    ``requests`` is the list of request descriptions, as :func:`check_envelope` takes them, one per request
+    sent, in order. A 200 answer is an array with exactly one item per request, each exactly ``{"envelope",
+    "status"}`` with ``status`` an integer 100-599 (else the whole answer fails, ``E_ENVELOPE``); each item is
+    then checked as an envelope, with its own status, against its own request, and reported in its place in
+    ``items``: a failing item does not fail the others. Any other status is a refusal of the whole batch:
+    one envelope of outcome ``unlicensed``, ``payment_required``, ``rate_limited``, ``bad_request`` or
+    ``error``, with nothing to bind. Never raises for an invalid answer; TypeError or ValueError for
+    malformed arguments, as for :func:`check_envelope`. Uses no network.
+    """
+    if not isinstance(body, (str, bytes, bytearray, memoryview)):
+        raise TypeError(f"body must be JSON text or bytes, not {type(body).__name__}")
+    if not isinstance(requests, (list, tuple)):
+        raise TypeError("requests is a list of request descriptions, one per request in the batch")
+    reqs = [_check_request(r) for r in requests]
+    sources = key_sources(keys)
+    try:
+        parsed = parse_json(body)
+        tree = number_tree(body)
+        if not (isinstance(status, int) and not isinstance(status, bool) and status == 200):
+            res = _check_parsed(status, parsed, tree, sources, _Request("none"), outcomes=REFUSALS)
+            return BatchResult(True, "OK", res.outcome, (), f"the batch refused whole: {res.outcome}", None)
+        if not isinstance(parsed, list) or len(parsed) != len(reqs):
+            _bad("a batch response is an array with one item per request", "$")
+        for i, item in enumerate(parsed):
+            p = f"$[{i}]"
+            if not isinstance(item, dict) or set(item) != {"envelope", "status"}:
+                _bad("an item is exactly {envelope, status}", p)
+            text = numbers_of(tree[i]).get("status")
+            st = item["status"]
+            if (isinstance(st, bool) or not isinstance(st, (int, float)) or text is None
+                    or not _INTEGER.fullmatch(text) or not 100 <= int(text) <= 599):
+                _bad("an item's status is an HTTP status code, an integer 100-599", f"{p}.status")
+        items: List[EnvelopeResult] = []
+        for i, (item, req) in enumerate(zip(parsed, reqs)):
+            try:
+                env_tree = tree[i]["envelope"]
+                st = int(numbers_of(tree[i])["status"])
+                items.append(_check_parsed(st, item["envelope"], env_tree, sources, req, f"$[{i}].envelope"))
+            except DatumeshError as e:
+                items.append(EnvelopeResult(False, e.code, None, None, None, e.detail, e.path))
+        failed = sum(1 for x in items if not x.ok)
+        return BatchResult(True, "OK", None, tuple(items), f"{len(items)} items, {failed} failing", None)
+    except DatumeshError as e:
+        return BatchResult(False, e.code, None, (), e.detail, e.path)

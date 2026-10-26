@@ -61,9 +61,10 @@ def check_name(s: str, path: Optional[str], code: str = "E_CANON_NAME") -> None:
 
 
 def check_arg_name(s: str, path: Optional[str]) -> None:
-    """An argument name (SPEC 2.4): a name that is not ``asof`` and does not start with ``dm_``."""
+    """An argument name (SPEC 2.4): a name that is not ``asof`` or ``fn_hash`` (spec-0.4.2: the URI's pin) and
+    does not start with ``dm_``."""
     check_name(s, path, "E_CANON_ARG_NAME")
-    if s == "asof" or s.startswith("dm_"):
+    if s in ("asof", "fn_hash") or s.startswith("dm_"):
         fail("E_CANON_ARG_NAME", f"reserved argument name {s!r}", path)
 
 

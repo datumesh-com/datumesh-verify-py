@@ -28,6 +28,7 @@ MESH_ENDPOINTS: Dict[str, Tuple[Tuple[str, ...], bool]] = {
     "receipt": (("hash",), True),
     "slice": (("cell",), False),
     "verify": ((), False),
+    "versions": (("cell",), False),  # spec-0.4.2
 }
 
 LIMIT_URL = 512

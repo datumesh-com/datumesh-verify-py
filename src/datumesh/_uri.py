@@ -70,7 +70,9 @@ def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
     supplies each argument's type. As SPEC 5.4 says, it is taken as given (it comes
     from a descriptor already checked under section 7): only its argument types are
     read, in step 5, and a signature from which they cannot be read is E_SCHEMA.
-    Checks run in the order of SPEC 5.4 and the first failure is raised as DatumeshError.
+    Checks run in the order of SPEC 5.4 and the first failure is raised as DatumeshError. A pinned URI
+    (``fn_hash=<64 hex>`` after the arguments, before ``asof``; spec-0.4.2) gives a reference with
+    ``fn_hash``; ``signature`` is then that of the pinned descriptor.
     """
     if not isinstance(uri, str):
         raise TypeError(f"uri must be a str, not {type(uri).__name__}")
@@ -106,6 +108,9 @@ def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
     asof: Optional[str] = None
     if params and params[-1][0] == "asof":
         asof = params.pop()[1]
+    pin: Optional[str] = None  # spec-0.4.2: fn_hash= after the arguments, before asof
+    if params and params[-1][0] == "fn_hash":
+        pin = params.pop()[1]
     previous: Optional[str] = None
     for name, _ in params:
         p = f"uri.query.{name}"
@@ -114,6 +119,10 @@ def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
             if asof is not None:
                 fail("E_CANON_ARG_DUPLICATE", "asof appears more than once", p)
             fail("E_CANON_ARG_ORDER", "asof must be the last parameter", p)
+        if name == "fn_hash":
+            if pin is not None:
+                fail("E_CANON_ARG_DUPLICATE", "fn_hash appears more than once", p)
+            fail("E_CANON_ARG_ORDER", "fn_hash comes after the arguments, before asof", p)
         if name.startswith("dm_"):
             fail("E_CANON_ARG_NAME", f"reserved argument name {name!r}", p)
         if previous is not None:
@@ -155,7 +164,11 @@ def parse_uri(uri: str, signature: Dict[str, Any]) -> Dict[str, Any]:
             args[name] = {"type": t, "value": text}
 
     ref: Dict[str, Any] = {"args": args, "fn": fn, "ns": ns}
-    # 7. asof.
+    # 7. The pin (spec-0.4.2), not percent-decoded: 64 lowercase hex digits.
+    if pin is not None:
+        lx.check_hex(pin, 64, "uri.query.fn_hash")
+        ref["fn_hash"] = pin
+    # 8. asof.
     if asof is not None:
         text = _decode(asof, "uri.query.asof")
         lx.check_instant(text, "uri.query.asof")
@@ -175,6 +188,8 @@ def format_uri(ref: Dict[str, Any]) -> str:
             parts.append(f"{name}={'true' if v['value'] else 'false'}")
         else:
             parts.append(f"{name}={_encode(v['value'])}")
+    if "fn_hash" in ref:
+        parts.append(f"fn_hash={ref['fn_hash']}")
     if "asof" in ref:
         parts.append(f"asof={ref['asof']}")
     uri = f"{SCHEME}{ref['ns']}/{ref['fn']}"
