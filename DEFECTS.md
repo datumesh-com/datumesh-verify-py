@@ -1,7 +1,7 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Six sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.1` (DEF-48 to DEF-51, all
-resolved at `3f79313`), then
+Seven sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.2` (DEF-52 to DEF-56), then
+`spec-0.4.1` (DEF-48 to DEF-51, all resolved at `3f79313`), then
 `spec-0.4.0` (what that revision
 resolves, and DEF-42 to DEF-47, all resolved at `18be70f`), then `spec-0.3.0` (what that revision resolves, and DEF-40 to
 DEF-41), then `spec-0.2.1` (status of every entry at that revision, and DEF-39), then `spec-0.2.0`
@@ -388,6 +388,87 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 - Vector `canonical` strings may contain U+2028 (`jcs/escapes`), which some JSON-lines tooling
   treats as a line break; the conformance runner here escapes all non-ASCII output for that
   reason. Worth a sentence in 11 for harness authors.
+
+# spec-0.4.2
+
+Spec commit `810761d` (the `spec-0.4.2` draft, on top of `spec-0.4.1` = `3f79313`; the tag is to be put on
+it or on a later commit). This library is 0.4.2 and conforms: of the 1,129 vectors, the 555 for verifier
+libraries pass (through the API and `tools/run_vectors.py`); the 574 of kinds `formula`, `formula-eval`,
+`excel`, `decimal` and `call` are skipped. `tests/test_spec_0_4_2.py` tests the changes through the API.
+Implemented from the diff of SPEC.md, the schemas and the vectors; `canon.py` run as a black box only:
+the 135 hand-made envelope, batch, URI and reference cases of the tests agree with it, and so do 14,000
+mutated vectors of `tools/oracle_fuzz.py` after DEF-56. One disclosure, as in `spec-0.1.1`: a probe that
+crashed the reference tool (DEF-55) printed a Python traceback quoting a few of its lines (the cursor
+comparison in its slice-page check); I kept only that it raised. Not exposed: a check of the versions
+endpoint's answer (9.8): it is unsigned, no vector covers it, and an importer verifies each listed receipt
+on its own terms. DEF-34 stays open: no `spec-0.4.2` tag, and `810761d` is not on GitHub yet.
+
+## DEF-52. 5.6: a page's `fn_hash` and the slice's
+
+**Problem.** A page may carry `fn_hash` "As in 5.5", and 5.5 says "With a receipt, it MUST equal the
+receipt's `cell.fn_hash`". A page has no receipt of its own; it has `slice`, whose `fn_hash` is the
+function the page is of. Whether the page's `fn_hash` must equal it is not said.
+
+**Resolution.** As the reference tool: a page's `fn_hash` must equal its slice object's `fn_hash`
+(`E_ENVELOPE`), and a member's its receipt's.
+
+**Proposed wording (5.6, `fn_hash` row).** "As in 5.5; it MUST equal `slice`'s `fn_hash`."
+
+## DEF-53. 5.6: a cursor that does not match the slice's open arguments
+
+**Problem.** `after` is "an object from each open argument's name to the member's typed scalar", but what
+happens when it names other arguments, misses one, or has another type is not said. These are the client's
+own inputs, which elsewhere (5.5) are "the caller's error", not an `E_*` code.
+
+**Resolution.** A cursor that is not an object of typed scalars is the caller's error (`ValueError`). One
+that misses an open argument is `E_ENVELOPE` (path `request.after`), as the reference tool does; other names
+are ignored, as it does; a value of another type than the members' keys is `E_ENVELOPE` (DEF-55).
+
+**Proposed wording (5.6).** "A cursor is checked like the request: one that does not name every open
+argument of the slice, with values of the members' types, is the caller's error."
+
+## DEF-54. 5.7: how an item's `status` is written
+
+**Problem.** An item's `status` is "its HTTP status as an integer", 100-599. The vector
+`invalid/batch-status-fraction` (`200.0`) shows the integer text rule of 5.5 applies, but the text names
+only `age_seconds`, `retry_after_seconds` and `estimate_seconds` as integer members, and says they are "the
+only JSON numbers in this specification".
+
+**Resolution.** The integer text rule (`0|[1-9][0-9]*`) and 100-599, else the whole batch is `E_ENVELOPE`;
+`2e2`, `200.0` and `true` fail. The reference tool agrees.
+
+**Proposed wording (5.5, Integer members; 5.7).** Add an item's `status` to the integer members, and drop
+"the only JSON numbers".
+
+## DEF-55. 5.6: comparing keys of different types (a reference tool defect)
+
+**Problem.** Keys are compared "each in its type's order"; nothing says what a cursor (or member) of another
+type than the slice's open argument gives. On a cursor `{"quote": {"type": "number", "value": "1"}}` over
+string members, the reference tool raises a Python `TypeError` instead of answering.
+
+**Resolution.** `E_ENVELOPE`: a member whose key types differ from the cursor's or the previous member's
+cannot be ordered after it.
+
+**Proposed change.** State it (with DEF-53), and have the reference tool answer `E_ENVELOPE` (or treat the
+cursor as the caller's error).
+
+## DEF-56. 5.5: where the pin echo is checked
+
+**Problem.** Step 5 ends "The `fn_hash` echo follows its rule above", so the echo is checked after the
+receipt is verified (step 4). The "rule above" is also a member rule, which step 2 checks. The reference tool
+does neither: it checks the echo against the pin after the status (step 3) and before the receipt (step 4),
+and the echo against the receipt's `fn_hash` after the receipt. The order decides the code when a pinned
+answer both lacks the echo and has a receipt that does not verify (`E_ENVELOPE` against `E_SIGNATURE`, or
+the key codes). `tools/oracle_fuzz.py` found eight such cases.
+
+**Resolution.** The reference tool's order: the pin echo after step 3, before step 4; the receipt echo
+after step 4. (First implemented as step 5, then changed.)
+
+**Proposed wording (5.5, steps).** "3a. If the request was pinned, the envelope's `fn_hash` is the pin, and
+present except for `rate_limited`, `bad_request` and `pending` (`E_ENVELOPE`)." and in step 5: "With a
+receipt, `fn_hash`, when present, equals its `cell.fn_hash`."
+
+---
 
 # spec-0.4.1
 

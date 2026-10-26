@@ -40,7 +40,7 @@ OUT = "/work/vectors/probe"
 os.makedirs(OUT, exist_ok=True)
 vectors = [json.load(open(f)) for f in sorted(glob.glob("/repo/spec/vectors/*/*.json"))]
 # The formula evaluator kinds (spec-0.4.0) are not run by a verifier library.
-vectors = [v for v in vectors if v["kind"] not in ("formula", "formula-eval", "excel", "decimal")]
+vectors = [v for v in vectors if v["kind"] not in ("formula", "formula-eval", "excel", "decimal", "call")]
 
 POOL = ["", "*", "X", "a" * 65, "a" * 64, "1.50", "-0", "0", "1", "true", "2024-02-30", "2024-03-15",
         "2024-03-15T16:00:00.000000Z", "2024-03-16T09:00:00.000000Z", "2099-01-01T00:00:00.000000Z",
@@ -60,6 +60,9 @@ POOL += ["EUR", "USD", "usd", "GRD", "XXX", "degC", "°C", "kWh", "m/s", "1", "p
          "9dc30a40021f1f79d8dd9437ec9014ce134138326b72fcb9696485ab3d69330a:17:text/Plain",
          "ok", "stale", "not_covered", "unlicensed", "payment_required", "rate_limited", "error",
          "primary", "verified", "unverified", "E_SIGNATURE", "E_TEAPOT", "0.05", "https://mesh.example/pay"]
+# spec-0.4.2: pins, computed, slice pages, batches
+POOL += ["computed", "E_SLICE_AT_CELL", "E_NAME_UNBOUND", "fn_hash", "7b58ecb8fd23b644c87951d0bd609790ff547cbb23fed27186c669ce2ce0aa80",
+         "https://mesh.example/slice/x", "calc.example.net", "mesh.example.net", "versions"]
 # spec-0.4.1: pending, jobs, mesh documents
 POOL += ["pending", "E_JOB_UNKNOWN", "E_MESH_DOC", "4f9c2a7e1b3d5f60817a9c2e4b6d8f01",
          "https://mesh.example/jobs/4f9c2a7e1b3d5f60817a9c2e4b6d8f01", "https://mesh.example.org/cell/{cell}",
@@ -151,7 +154,7 @@ def emit(i, v):
     v = dict(v, id="probe/f%05d" % i, valid=False, error="E_PROBE", description="fuzz")
     for k in ("canonical", "sha256", "object", "https", "key_id", "key_ids", "sig", "level", "unit", "outcome",
               "trust", "receipt_hash", "code", "blob_checked", "slice_id", "members_hash", "entry", "bindings",
-              "endpoints"):
+              "endpoints", "results"):
         v.pop(k, None)
     json.dump(v, open(os.path.join(OUT, "f%05d.json" % i), "w"))
 
@@ -280,7 +283,21 @@ while i < N:
                     e.pop("body", None)
         elif kind == "envelope":
             t = rnd.random()
-            if t < 0.1 and isinstance(v.get("request"), dict):
+            if t < 0.05 and isinstance(v.get("request"), dict):
+                # spec-0.4.2: the pin and the mesh asked in the request description
+                k = rnd.choice(["fn_hash", "mesh"])
+                if k in v["request"] and rnd.random() < 0.5:
+                    v["request"].pop(k)
+                elif k == "fn_hash":
+                    v["request"]["fn_hash"] = rnd.choice(["7b58ecb8fd23b644c87951d0bd609790ff547cbb23fed27186c669ce2ce0aa80",
+                                                          "0" * 64])
+                else:
+                    v["request"]["mesh"] = rnd.choice(["calc.example.net", "mesh.example.net", "mesh.example",
+                                                       "rates.example.org"])
+                emit(i, v)
+                i += 1
+                continue
+            if t < 0.1 and isinstance(v.get("request"), dict) and "cell_id" in v["request"]:
                 # spec-0.4.1: the job in the request description, present, absent or another
                 if "job" in v["request"] and rnd.random() < 0.5:
                     v["request"].pop("job")
