@@ -60,7 +60,7 @@ class EnvelopeVectorTest(unittest.TestCase):
                 else:
                     self.assertEqual((res.ok, res.code), (False, v["error"]))
                 n += 1
-        self.assertEqual(n, 135)  # spec-0.4.0: 3 with fault; spec-0.4.1: 29 pending and job; spec-0.4.2: 43
+        self.assertEqual(n, 136)  # spec-0.4.0: 3 with fault; spec-0.4.1: 29 pending and job; spec-0.4.2: 44
 
     def test_valid_bodies_with_wrong_status(self) -> None:
         total = 0

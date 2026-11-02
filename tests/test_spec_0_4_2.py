@@ -240,6 +240,8 @@ class EchoAndCodesTest(unittest.TestCase):
                     {"cell_id": CELL, "mesh": 5}, {"cell_id": CELL, "after": {}},
                     {"slice_id": "a" * 64, "job": J}, {"slice_id": "A" * 64}, {"slice_id": "a" * 64, "cell_id": CELL},
                     {"slice_id": "a" * 64, "after": []}, {"slice_id": "a" * 64, "after": {"q": "*"}},
+                    {"slice_id": "a" * 64, "after": {"q": {"type": "date", "value": "2024-02-30"}}},
+                    {}, {"asof": ASOF}, {"cell_id": CELL, "job": J[:-1]},
                     {"slice_id": "a" * 64, "after": {"q": {"type": "string", "value": "\u0007"}}}):
             with self.subTest(bad), self.assertRaises((ValueError, TypeError)):
                 check_envelope(404, body, [], bad)
@@ -296,6 +298,31 @@ class SlicePageTest(unittest.TestCase):
         for body, status, request, want in cases:
             with self.subTest(json.dumps(body)[:150], request=request):
                 self.assertEqual(ecode(PAGE, body, status, request), want)
+
+    def test_cursor_well_formed_but_unorderable(self) -> None:
+        # fc870ab: an empty cursor, or one whose names are not argument names, is well formed (values are typed
+        # scalars): it is compared on the open arguments only, so it lacks one: E_ENVELOPE, not the caller's error
+        req = PAGE["request"]
+        for after in ({}, {"Quote": {"type": "string", "value": "A"}}):
+            with self.subTest(after):
+                self.assertEqual(ecode(PAGE, PB, 200, dict(req, after=after)), "E_ENVELOPE")
+        self.assertEqual(ecode(PAGE, PB, 200, dict(req, after={"quote": {"type": "string", "value": "A"},
+                                                               "Bad Name": {"type": "string", "value": "A"}})), "OK")
+
+    def test_members_checked_one_by_one(self) -> None:
+        # fc870ab: the page, then each member completely (receipt included) before the next member
+        req = PAGE["request"]
+        bad_sig = dict(PB["members"][0], receipt=dict(PB["members"][0]["receipt"], sig="0" * 128))
+        body = dict(PB, members=[bad_sig, {"outcome": "not_covered"}])
+        self.assertEqual(ecode(PAGE, body, 200, req), "E_SIGNATURE")
+        body = dict(PB, members=[PB["members"][0], {"outcome": "not_covered"}, bad_sig])
+        self.assertEqual(ecode(PAGE, body, 200, req), "E_ENVELOPE")
+        # the page's own rules (status, slice id) before any member
+        body = dict(PB, members=[bad_sig])
+        self.assertEqual(ecode(PAGE, body, 200, dict(req, slice_id=OTHER)), "E_ENVELOPE")
+        self.assertEqual(ecode(PAGE, dict(PB, members=[{"outcome": "not_covered"}]), 404, req), "E_ENVELOPE")
+        res = check_envelope(200, json.dumps(dict(PB, members=[bad_sig, {"outcome": "x"}])), env_keys(PAGE["keys"]), req)
+        self.assertEqual((res.code, res.path), ("E_SIGNATURE", "$.members[0].receipt.sig"))
 
     def test_page_result(self) -> None:
         res = check_envelope(200, PAGE["input"], env_keys(PAGE["keys"]), PAGE["request"])
