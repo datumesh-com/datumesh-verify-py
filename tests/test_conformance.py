@@ -17,16 +17,16 @@ import datumesh
 class ConformanceTest(unittest.TestCase):
     def test_vector_count(self) -> None:
         counts = collections.Counter(v["kind"] for v in load_vectors())
-        # spec-0.4.2 (SPEC 14): 1129 vectors; 555 for verifier libraries, the rest (call included) for
+        # spec-0.4.2 (SPEC 14, a468606): 1145 vectors; 560 for verifier libraries, the rest (call included) for
         # implementations of the formula dialect
-        self.assertEqual(sum(counts.values()), 1129, counts)
-        self.assertEqual(len(verifier_vectors()), 555, counts)
+        self.assertEqual(sum(counts.values()), 1145, counts)
+        self.assertEqual(len(verifier_vectors()), 560, counts)
         self.assertEqual(counts["mesh"], 32, counts)
         self.assertEqual(counts["batch"], 11, counts)
         self.assertEqual(counts["call"], 27, counts)
-        self.assertEqual(sum(counts[k] for k in FORMULA_KINDS), 574, counts)
+        self.assertEqual(sum(counts[k] for k in FORMULA_KINDS), 585, counts)
         self.assertEqual(counts["unit"], 13, counts)
-        self.assertEqual(counts["envelope"], 130, counts)
+        self.assertEqual(counts["envelope"], 135, counts)
         self.assertEqual(counts["slice"], 18, counts)
         self.assertEqual(counts["function"], 48 + 16 + 1, counts)  # spec-0.4.2: fn_hash reserved
         # 30 slice-lineage receipt vectors (13 valid, 17 invalid); invalid/receipt-slice is from spec-0.1
