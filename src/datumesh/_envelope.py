@@ -402,12 +402,23 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
         _bad("a batch is refused whole only by a refusal outcome", f"{path}.outcome")
     if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
         _bad(f"HTTP status {status!r} does not match outcome {outcome!r}", "status" if path == "$" else path)
-    # the fn_hash echo against the pin (spec-0.4.2), before the receipt, as the reference tool orders it
+    # step 3a (SPEC 5.5, a468606): what the request decides without the receipt, in this order
+    if env.get("error") == "E_JOB_UNKNOWN" and req.job is None:
+        _bad("E_JOB_UNKNOWN answers a job URL only, not a /cell request", f"{path}.error")
     if req.fn_hash is not None and req.kind != "none":
         if "fn_hash" in env and env["fn_hash"] != req.fn_hash:
             _bad("fn_hash echoes another function than the one pinned", f"{path}.fn_hash")
         if "fn_hash" not in env and outcome not in ("rate_limited", "bad_request", "pending"):
             _bad("an envelope answering a pinned request echoes its fn_hash", f"{path}.fn_hash")
+    if outcome == "pending" and req.kind == "cell":
+        echo = env["request"]
+        if echo["cell_id"] != req.target or echo.get("asof") != req.asof or echo.get("fn_hash") != req.fn_hash:
+            _bad("the pending envelope echoes another request (cell_id; asof and fn_hash present exactly when "
+                 "requested, and equal)", f"{path}.request")
+        if req.job is not None and env["job"] != req.job:
+            _bad("the pending envelope is for another job than the one polled", f"{path}.job")
+    if outcome == "pending" and req.mesh is not None and _url_host(env["poll"], LIMIT_POLL, "poll", "") != req.mesh:
+        _bad("poll is on another host than the mesh asked", f"{path}.poll")
     trust: Optional[str] = None
     h: Optional[str] = None
     r: Optional[Dict[str, Any]] = None
@@ -421,26 +432,14 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
         if req.asof is not None and r["asof"] > req.asof:
             _bad(f"the {outcome} receipt answers as of {r['asof']}, after the requested {req.asof}",
                  f"{path}.receipt.asof")
-    if outcome == "pending" and req.kind == "cell":
-        echo = env["request"]
-        if echo["cell_id"] != req.target or echo.get("asof") != req.asof or echo.get("fn_hash") != req.fn_hash:
-            _bad("the pending envelope echoes another request (cell_id; asof and fn_hash present exactly when "
-                 "requested, and equal)", f"{path}.request")
-        if req.job is not None and env["job"] != req.job:
-            _bad("the pending envelope is for another job than the one polled", f"{path}.job")
-    if env.get("error") == "E_JOB_UNKNOWN" and req.job is None:
-        _bad("E_JOB_UNKNOWN answers a job URL only, not a /cell request", f"{path}.error")
-    # the fn_hash echo against the receipt (spec-0.4.2)
-    if r is not None and "fn_hash" in env and env["fn_hash"] != r["cell"]["fn_hash"]:
-        _bad("fn_hash echoes another function than the receipt's", f"{path}.fn_hash")
-    # step 6
+    # step 6: trust, then the fn_hash echo against the receipt (spec-0.4.2), then superseded_by
     if r is not None:
         trust = env["trust"]
         _check_trust(trust, r, req.mesh, f"{path}.trust")
+        if "fn_hash" in env and env["fn_hash"] != r["cell"]["fn_hash"]:
+            _bad("fn_hash echoes another function than the receipt's", f"{path}.fn_hash")
         if env.get("superseded_by") == h:
             _bad("superseded_by is the receipt's own hash", f"{path}.superseded_by")
-    if outcome == "pending" and req.mesh is not None and _url_host(env["poll"], LIMIT_POLL, "poll", "") != req.mesh:
-        _bad("poll is on another host than the mesh asked", f"{path}.poll")
     members: Tuple[MemberResult, ...] = ()
     if page:
         members = _check_page(env, sources, req, path)
@@ -464,11 +463,11 @@ def _check_page(env: Dict[str, Any], sources: Tuple[_Source, ...], req: _Request
         _model.validate_slice(sl, f"{path}.slice")
     except DatumeshError as e:
         _bad(f"slice is a slice object ({e.code})", f"{path}.slice")
-    if "next" in env and req.mesh is not None and _url_host(env["next"], LIMIT_NEXT, "next", "") != req.mesh:
-        _bad("next is on another host than the mesh asked", f"{path}.next")
     slice_hash = sl["cell"]["fn_hash"] if _model.is_version_slice(sl) else sl["fn_hash"]
     if "fn_hash" in env and env["fn_hash"] != slice_hash:
         _bad("fn_hash echoes another function than the slice's", f"{path}.fn_hash")
+    if "next" in env and req.mesh is not None and _url_host(env["next"], LIMIT_NEXT, "next", "") != req.mesh:
+        _bad("next is on another host than the mesh asked", f"{path}.next")
     previous: Optional[Tuple[Any, ...]] = None
     if req.after is not None:
         previous = _key(sl, req.after)
@@ -483,9 +482,9 @@ def _check_page(env: Dict[str, Any], sources: Tuple[_Source, ...], req: _Request
             _bad(f"the member is not a cell of the slice: {why}", f"{mp}.receipt.cell")
         if req.asof is not None and r["asof"] > req.asof:
             _bad(f"the member answers as of {r['asof']}, after the requested {req.asof}", f"{mp}.receipt.asof")
+        _check_trust(m["trust"], r, req.mesh, f"{mp}.trust")
         if "fn_hash" in m and m["fn_hash"] != r["cell"]["fn_hash"]:
             _bad("fn_hash echoes another function than the receipt's", f"{mp}.fn_hash")
-        _check_trust(m["trust"], r, req.mesh, f"{mp}.trust")
         if m.get("superseded_by") == h:
             _bad("superseded_by is the receipt's own hash", f"{mp}.superseded_by")
         key = _key(sl, r["cell"]["args"])
