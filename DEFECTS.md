@@ -1,6 +1,7 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Seven sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.2` (DEF-52 to DEF-56), then
+Seven sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.2` (DEF-52 to DEF-56, all
+resolved at `a468606`), then
 `spec-0.4.1` (DEF-48 to DEF-51, all resolved at `3f79313`), then
 `spec-0.4.0` (what that revision
 resolves, and DEF-42 to DEF-47, all resolved at `18be70f`), then `spec-0.3.0` (what that revision resolves, and DEF-40 to
@@ -391,9 +392,10 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 
 # spec-0.4.2
 
-Spec commit `810761d` (the `spec-0.4.2` draft, on top of `spec-0.4.1` = `3f79313`; the tag is to be put on
-it or on a later commit). This library is 0.4.2 and conforms: of the 1,129 vectors, the 555 for verifier
-libraries pass (through the API and `tools/run_vectors.py`); the 574 of kinds `formula`, `formula-eval`,
+Spec commit `a468606` (the `spec-0.4.2` draft, on top of `spec-0.4.1` = `3f79313`; first conformed at
+`810761d`, then moved to `a468606`, which settles DEF-52 to DEF-56 and adds 16 vectors; the tag is to be put
+on it or on a later commit). This library is 0.4.2 and conforms: of the 1,145 vectors, the 560 for verifier
+libraries pass (through the API and `tools/run_vectors.py`); the 585 of kinds `formula`, `formula-eval`,
 `excel`, `decimal` and `call` are skipped. `tests/test_spec_0_4_2.py` tests the changes through the API.
 Implemented from the diff of SPEC.md, the schemas and the vectors; `canon.py` run as a black box only:
 the 135 hand-made envelope, batch, URI and reference cases of the tests agree with it, and so do 14,000
@@ -401,7 +403,20 @@ mutated vectors of `tools/oracle_fuzz.py` after DEF-56. One disclosure, as in `s
 crashed the reference tool (DEF-55) printed a Python traceback quoting a few of its lines (the cursor
 comparison in its slice-page check); I kept only that it raised. Not exposed: a check of the versions
 endpoint's answer (9.8): it is unsigned, no vector covers it, and an importer verifies each listed receipt
-on its own terms. DEF-34 stays open: no `spec-0.4.2` tag, and `810761d` is not on GitHub yet.
+on its own terms. DEF-34 stays open: no `spec-0.4.2` tag, and neither `810761d` nor `a468606` is on GitHub
+yet.
+
+| Entry | Status at a468606 |
+|---|---|
+| DEF-52 | Resolved (5.6, the `fn_hash` row and binding step 2): "it MUST equal `slice`'s `fn_hash`"; checked after the slice id and before `next`. As implemented. Closed. |
+| DEF-53 | Resolved (5.6, Binding): "A cursor is compared on the slice's open arguments only, and its other names are ignored; a cursor that lacks one, or whose value has another type than the members' key (or members whose keys differ in type), cannot be ordered against and is `E_ENVELOPE`; a cursor that is not an object at all is a malformed request description, the caller's error". As implemented. Closed. |
+| DEF-54 | Resolved (5.5, Integer members): "and since `spec-0.4.2` an item's `status` in a batch (5.7)". As implemented. Closed. |
+| DEF-55 | Resolved (5.6, Binding, as DEF-53), and the reference tool no longer raises (SPEC 14). As implemented. Closed. |
+| DEF-56 | Resolved (5.5, new step 3a and step 6): 3a, after the status and before the receipt, holds `E_JOB_UNKNOWN` at a job URL, the pin echo, then the `pending` echo, job and `poll`; step 6 holds `primary`, `computed`, the `fn_hash` echo against the receipt, then `superseded_by`. The library now runs them in that order (no code changes: every check moved is `E_ENVELOPE`). Closed. |
+
+Still unsettled here: nothing new. One judgement remains the library's own and is unchanged: a cursor value that is
+an object but not a typed scalar is the caller's error (`ValueError`), as a malformed request description is
+(5.5); the text says so only for "a cursor that is not an object at all".
 
 ## DEF-52. 5.6: a page's `fn_hash` and the slice's
 
