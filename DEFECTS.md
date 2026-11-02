@@ -392,10 +392,11 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 
 # spec-0.4.2
 
-Spec commit `a468606` (the `spec-0.4.2` draft, on top of `spec-0.4.1` = `3f79313`; first conformed at
-`810761d`, then moved to `a468606`, which settles DEF-52 to DEF-56 and adds 16 vectors; the tag is to be put
-on it or on a later commit). This library is 0.4.2 and conforms: of the 1,145 vectors, the 560 for verifier
-libraries pass (through the API and `tools/run_vectors.py`); the 585 of kinds `formula`, `formula-eval`,
+Spec commit `fc870ab` (final `spec-0.4.2`, on top of `spec-0.4.1` = `3f79313`; first conformed at
+`810761d`, then `a468606`, which settles DEF-52 to DEF-56 and adds 16 vectors, then `fc870ab`, which states
+malformed request descriptions completely and the order of a page's checks, with 1 vector; the tag is to be
+put on it). This library is 0.4.2 and conforms: of the 1,146 vectors, the 561 for verifier libraries pass
+(through the API and `tools/run_vectors.py`); the 585 of kinds `formula`, `formula-eval`,
 `excel`, `decimal` and `call` are skipped. `tests/test_spec_0_4_2.py` tests the changes through the API.
 Implemented from the diff of SPEC.md, the schemas and the vectors; `canon.py` run as a black box only:
 the 135 hand-made envelope, batch, URI and reference cases of the tests agree with it, and so do 14,000
@@ -414,9 +415,14 @@ yet.
 | DEF-55 | Resolved (5.6, Binding, as DEF-53), and the reference tool no longer raises (SPEC 14). As implemented. Closed. |
 | DEF-56 | Resolved (5.5, new step 3a and step 6): 3a, after the status and before the receipt, holds `E_JOB_UNKNOWN` at a job URL, the pin echo, then the `pending` echo, job and `poll`; step 6 holds `primary`, `computed`, the `fn_hash` echo against the receipt, then `superseded_by`. The library now runs them in that order (no code changes: every check moved is `E_ENVELOPE`). Closed. |
 
-Still unsettled here: nothing new. One judgement remains the library's own and is unchanged: a cursor value that is
-an object but not a typed scalar is the caller's error (`ValueError`), as a malformed request description is
-(5.5); the text says so only for "a cursor that is not an object at all".
+The remaining judgement noted at `a468606` (a cursor value that is not a typed scalar) is settled at `fc870ab`
+(5.5): "a cursor `after` (5.6) that is not an object, or whose values are not typed scalars", among every
+malformed member of a request description, is the caller's error, raised before the envelope (and before a
+batch's body). With it, an empty cursor, or one whose names are not argument names, is well formed; this
+library had raised for both and now reports `E_ENVELOPE` when the cursor lacks an open argument. `fc870ab`
+also puts a page's checks in the reference's order (5.6: the page, then each member completely, receipt
+included); this library had checked every member's shape before any receipt, and now follows it. Nothing
+remains unsettled in this section.
 
 ## DEF-52. 5.6: a page's `fn_hash` and the slice's
 
