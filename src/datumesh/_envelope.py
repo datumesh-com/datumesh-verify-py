@@ -271,17 +271,6 @@ def _members(env: Any, numbers: Dict[str, str], path: str, at_slice: bool, membe
     return out
 
 
-def _page_members(env: Dict[str, Any], tree: Any, path: str) -> None:
-    """Step 1 of SPEC 5.6 for a page's members: an array of ok or stale envelopes."""
-    members = env["members"]
-    if not isinstance(members, list):
-        _bad("members is an array of envelopes", f"{path}.members")
-    trees = tree.get("members") if isinstance(tree, dict) else None
-    for i, m in enumerate(members):
-        mt = trees[i] if isinstance(trees, list) and i < len(trees) else None
-        _members(m, numbers_of(mt), f"{path}.members[{i}]", True, member=True)
-
-
 def _echoed_request(v: Any, path: str) -> None:
     """A pending envelope's ``request``: exactly ``cell_id`` (64 lowercase hex), an optional ``asof`` (an
     instant) and since spec-0.4.2 an optional ``fn_hash`` (the pin)."""
@@ -358,10 +347,10 @@ def _check_request(request: Any) -> _Request:
         if mesh is not None:
             lx.check_dns_name(mesh, "request.mesh")
         if "after" in request:
-            if not isinstance(after, dict) or not after:
+            # an object whose values are typed scalars (fc870ab); its names are compared, not checked
+            if not isinstance(after, dict):
                 raise ValueError("request after is an object from open argument names to typed scalars")
-            for name in sorted(after):
-                lx.check_arg_name(name, f"request.after.{name}")
+            for name in sorted(after, key=str):
                 _model.validate_scalar(after[name], f"request.after.{name}")
     except DatumeshError as e:
         raise ValueError(f"invalid request: {e}") from None
@@ -396,8 +385,8 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
     env = _members(env_v, numbers_of(tree), path, at_slice)
     outcome = env["outcome"]
     page = at_slice and outcome == "ok"
-    if page:
-        _page_members(env, tree, path)
+    if page and not isinstance(env["members"], list):
+        _bad("members is an array of envelopes", f"{path}.members")
     if outcomes is not None and outcome not in outcomes:
         _bad("a batch is refused whole only by a refusal outcome", f"{path}.outcome")
     if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
@@ -442,7 +431,7 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
             _bad("superseded_by is the receipt's own hash", f"{path}.superseded_by")
     members: Tuple[MemberResult, ...] = ()
     if page:
-        members = _check_page(env, sources, req, path)
+        members = _check_page(env, tree, sources, req, path)
     fault, error = env.get("fault"), env.get("error")
     detail = "well-formed envelope" + ("; receipt signature-valid" if h else "") + (
         f"; evaluation fault {fault}" if fault else "") + (f"; job {env['job']}" if outcome == "pending" else "") + (
@@ -454,8 +443,10 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
                           error, members, env.get("next"))
 
 
-def _check_page(env: Dict[str, Any], sources: Tuple[_Source, ...], req: _Request, path: str) -> Tuple[MemberResult, ...]:
-    """Steps 2-3 of SPEC 5.6 for a page whose members' shapes are checked."""
+def _check_page(env: Dict[str, Any], tree: Any, sources: Tuple[_Source, ...], req: _Request,
+                path: str) -> Tuple[MemberResult, ...]:
+    """Steps 2-3 of SPEC 5.6 (fc870ab): the page's binding, then each member completely, its shape and receipt
+    included, before the next member."""
     sl = env["slice"]
     if hashlib.sha256(jcs_bytes(sl)).hexdigest() != req.target:
         _bad("the page is of another slice than the one requested", f"{path}.slice")
@@ -474,8 +465,11 @@ def _check_page(env: Dict[str, Any], sources: Tuple[_Source, ...], req: _Request
         if previous is None:
             _bad("after does not name the slice's open arguments with their types", "request.after")
     out: List[MemberResult] = []
+    trees = tree.get("members") if isinstance(tree, dict) else None
     for i, m in enumerate(env["members"]):
         mp = f"{path}.members[{i}]"
+        mt = trees[i] if isinstance(trees, list) and i < len(trees) else None
+        _members(m, numbers_of(mt), mp, True, member=True)
         r, h = _verify_receipt(m["receipt"], sources, f"{mp}.receipt")
         why = _model.member_of(sl, r)
         if why is not None:
