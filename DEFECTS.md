@@ -1,7 +1,7 @@
 # SPEC.md defects found while implementing datumesh-verify-py
 
-Seven sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.2` (DEF-52 to DEF-56, all
-resolved at `a468606`), then
+Eight sections: `spec-0.1.1` (step 0.2, DEF-01 to DEF-22), then `spec-0.4.3` (DEF-57 and DEF-58), then
+`spec-0.4.2` (DEF-52 to DEF-56, all resolved at `a468606`), then
 `spec-0.4.1` (DEF-48 to DEF-51, all resolved at `3f79313`), then
 `spec-0.4.0` (what that revision
 resolves, and DEF-42 to DEF-47, all resolved at `18be70f`), then `spec-0.3.0` (what that revision resolves, and DEF-40 to
@@ -389,6 +389,49 @@ and lexical value), and is a date, instant or string (`E_VALID_MISMATCH`)."
 - Vector `canonical` strings may contain U+2028 (`jcs/escapes`), which some JSON-lines tooling
   treats as a line break; the conformance runner here escapes all non-ASCII output for that
   reason. Worth a sentence in 11 for harness authors.
+
+# spec-0.4.3
+
+Spec commit `99123b2` (tag `spec-0.4.3`, on top of `spec-0.4.2` = `fc870ab`). This library is 0.4.3 and
+conforms: of the 1,236 vectors, the 651 for verifier libraries pass (through the API and
+`tools/run_vectors.py`), the 50 `licence` and 11 `entitlement` vectors included; the 585 of kinds `formula`,
+`formula-eval`, `excel`, `decimal` and `call` are skipped. `tests/test_spec_0_4_3.py` tests the changes
+through the API. Implemented from the diff of SPEC.md, the schemas, the vectors and README.md, and
+`crosscheck/README.md`; `canon.py` run as a black box only, never read: 3,060 probe vectors written by this
+library (2,000 random licence cases with random declarations, 1,000 key documents with random
+declarations, 60 error, `not_covered` and `bad_request` envelopes with and without `E_FOREIGN_UNAVAILABLE`
+and `detail` at several statuses) all pass the reference's `check`, and the 3,000 mutated vectors of
+`tools/oracle_fuzz.py --seed 43` (key documents with declarations and `E_FOREIGN_UNAVAILABLE` envelopes
+among them) show no disagreement. The spec text was sufficient for every
+vector. Two notes, neither blocking:
+
+## DEF-57. 10.3: what "as step 7.5 obtains them" requires of L
+
+**Problem.** 10.3 takes L "as step 7.5 obtains them", and says the check runs on a receipt "that has passed
+10.1 (at least through step 6, its input receipts verified as in step 7.5)". Step 7.5 needs the descriptor
+(declared inputs, `E_INPUT_UNDECLARED`) and checks membership and time order; an entitlement caller may have
+the input receipts and manifests but not the descriptor. It is not said whether an implementation that
+collects L must repeat those checks, or only obtain the receipts (each of its cited hash) and manifests (of
+their entry).
+
+**Resolution.** `input_licences` obtains each input as 7.5 does (a missing receipt or manifest, or one of
+another hash, slice or members: `E_INPUT_UNAVAILABLE`), verifies each input receipt through step 6 when
+given keys (`E_INPUT_INVALID`), and leaves membership, declared inputs and time order to verification,
+whose passing is the check's precondition. The `entitlement` vectors agree.
+
+**Proposed wording (10.3, Given, L).** "L, the licences of R's input receipts, slice members included,
+one per receipt. The check does not repeat 10.1: an implementation that collects L from receipts and
+manifests needs only obtain them as step 7.5 does (each of the hash or entry cited)."
+
+## DEF-58. 5.5: the member `detail` and a library's own result text
+
+**Problem.** Not a defect of the text: the envelope member is named `detail`, which this library's results
+already use for human-readable text (`EnvelopeResult.detail`, since 0.2.0).
+
+**Resolution.** The envelope's `detail` is exposed as `EnvelopeResult.error_detail` (it qualifies the
+`error` member); `EnvelopeResult.detail` keeps its meaning. Noted here so readers of SPEC 5.5 can find it.
+
+---
 
 # spec-0.4.2
 
