@@ -69,7 +69,8 @@ OUTPUTS = {
     "function": ["canonical", "sha256"],
     "uri": ["object", "canonical", "sha256", "https"],
     "keyid": ["key_id"],
-    "keys": ["key_ids"],
+    # keys: declarations (spec-0.4.3) only when the document has them
+    "keys": ["key_ids", "declarations"],
     "receipt": ["canonical", "sha256", "sig", "level"],
     "unit": ["unit"],
     # envelope: outcome, and trust and receipt_hash only when the envelope carries a receipt
@@ -82,6 +83,9 @@ OUTPUTS = {
     # mesh (spec-0.4.1): bindings and endpoints, carried by the valid vectors since 3f79313 (DEF-48); the
     # derivation from the mesh document by SPEC 9.6's rule is checked against them
     "mesh": ["bindings", "endpoints"],
+    # licence and entitlement (spec-0.4.3): every vector is valid; licence may be null (a refusal)
+    "licence": ["licence", "reason"],
+    "entitlement": ["entitled", "reason"],
 }
 
 #: The known endpoints of SPEC 9.6.
@@ -107,7 +111,7 @@ def expected_output(v: Dict[str, Any]) -> Dict[str, Any]:
         for k in OUTPUTS[v["kind"]]:
             if v["kind"] == "envelope" and k != "outcome" and k not in v:
                 continue
-            if v["kind"] == "batch" and k not in v:
+            if v["kind"] in ("batch", "keys") and k not in v:
                 continue
             if v["kind"] == "slice" and k in ("members_hash", "entry") and k not in v:
                 continue
