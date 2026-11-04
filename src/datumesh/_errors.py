@@ -6,9 +6,10 @@ from typing import NoReturn, Optional
 
 #: Every error code SPEC.md 10.2 defines, in the order of its table. Two, ``E_EVAL_UNAVAILABLE`` and
 #: ``E_INPUT_SUPERSEDED``, are not failures: :func:`verify` reports them with success (SPEC 10.1 step 7.6).
-#: The last four (spec-0.4.1 and spec-0.4.2) are not verification results: ``E_JOB_UNKNOWN``,
-#: ``E_SLICE_AT_CELL`` and ``E_NAME_UNBOUND`` are a mesh's answers about a request, in an envelope (5.5), and
-#: ``E_MESH_DOC`` a result of cross-mesh resolution (9.6).
+#: The last five (spec-0.4.1, spec-0.4.2 and spec-0.4.3) are not verification results: ``E_JOB_UNKNOWN``,
+#: ``E_SLICE_AT_CELL`` and ``E_NAME_UNBOUND`` are a mesh's answers about a request, in an envelope (5.5),
+#: ``E_MESH_DOC`` a result of cross-mesh resolution (9.6), and ``E_FOREIGN_UNAVAILABLE`` a mesh's or resolver's
+#: answer, in an ``error`` envelope with HTTP 502, that a foreign mesh could not be reached (5.5).
 ERROR_CODES: tuple[str, ...] = (
     "E_PARSE_JSON",
     "E_PARSE_DUPLICATE_KEY",
@@ -58,6 +59,7 @@ ERROR_CODES: tuple[str, ...] = (
     "E_MESH_DOC",
     "E_SLICE_AT_CELL",
     "E_NAME_UNBOUND",
+    "E_FOREIGN_UNAVAILABLE",
 )
 
 
@@ -68,6 +70,11 @@ SUCCESS_CODES: tuple[str, ...] = ("E_EVAL_UNAVAILABLE", "E_INPUT_SUPERSEDED")
 #: are not verification codes: no :class:`DatumeshError` has one.
 FAULT_CODES: tuple[str, ...] = ("E_FORMULA_DIV_ZERO", "E_FORMULA_DOMAIN", "E_FORMULA_RANGE", "E_FORMULA_EMPTY",
                                 "E_FORMULA_ABSENT", "E_FORMULA_FUTURE")
+
+
+#: The ``detail`` an ``error`` envelope carries with ``E_FOREIGN_UNAVAILABLE``, and only with it (SPEC 5.5,
+#: spec-0.4.3): why the foreign mesh could not be reached.
+FOREIGN_DETAILS: tuple[str, ...] = ("offline", "network", "dns", "tls", "timeout", "refused")
 
 
 class DatumeshError(ValueError):

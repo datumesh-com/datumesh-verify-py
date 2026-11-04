@@ -1,12 +1,15 @@
 """datumesh: verify Datumesh receipts (signed answers for addressable data cells).
 
-Implements the Datumesh protocol specification, revision ``spec-0.4.2``
+Implements the Datumesh protocol specification, revision ``spec-0.4.3``
 (https://github.com/datumesh-com/datumesh-spec), as a verifier library: RFC 8785
 canonical JSON, SHA-256 hashes, Ed25519 receipt signatures, blob content, units,
 cell URIs (pins included), response envelopes, slice pages and batches, key
 documents, and slice-as-lineage (slice entries,
 slice objects and manifests), and, separately from verification, cross-mesh
-resolution of a host's mesh document (:func:`resolve_mesh`). It evaluates no
+resolution of a host's mesh document (:func:`resolve_mesh`), and since spec-0.4.3 the
+publisher's ``declarations`` in key documents, licence inheritance (:func:`inherit_licence`), the
+licence entitlement check (:func:`check_entitlement`) and unrooted namespaces
+(:func:`is_unrooted`). It evaluates no
 function, formulas included: the evaluated value comes from the caller. Only
 :func:`fetch_keys` touches the network.
 """
@@ -18,16 +21,18 @@ from typing import Any, Dict, Optional
 
 from . import _model, _units
 from ._envelope import TRUST, BatchResult, EnvelopeResult, MemberResult, check_batch, check_envelope
-from ._errors import ERROR_CODES, FAULT_CODES, SUCCESS_CODES, DatumeshError, fail
+from ._errors import ERROR_CODES, FAULT_CODES, FOREIGN_DETAILS, SUCCESS_CODES, DatumeshError, fail
 from ._json import jcs_bytes
-from ._keys import Key, KeysResult, fetch_keys, key_id, keys_from_response
+from ._keys import Declaration, Key, KeysResult, fetch_keys, key_id, keys_from_response
+from ._licence import (ATTRIBUTION, ENTITLED_REASONS, PUBLIC_DOMAIN, REASONS, SHARE_ALIKE, EntitlementResult,
+                       LicenceResult, check_entitlement, inherit_licence, input_licences, is_unrooted, licence_tier)
 from ._mesh import MESH_ENDPOINTS, MESH_WELL_KNOWN_PATH, MeshResult, resolve_mesh
 from ._uri import format_uri, parse_uri, uri_to_https
 from ._verify import VerifyResult, load, payload_bytes, verify
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 #: The specification revision this package conforms to.
-SPEC_VERSION = "spec-0.4.2"
+SPEC_VERSION = "spec-0.4.3"
 #: Every literal unit listed in units.md (index units, ``index:<period>=<value>``, are a pattern and not listed).
 UNITS = tuple(sorted(_units.LITERALS))
 #: The currency codes of units.md 2.1.
@@ -39,6 +44,20 @@ KINDS = ("scalar", "cell", "ref", "function", "receipt", "slice", "manifest")
 
 __all__ = [
     "SPEC_VERSION",
+    "ATTRIBUTION",
+    "Declaration",
+    "ENTITLED_REASONS",
+    "EntitlementResult",
+    "FOREIGN_DETAILS",
+    "LicenceResult",
+    "PUBLIC_DOMAIN",
+    "REASONS",
+    "SHARE_ALIKE",
+    "check_entitlement",
+    "inherit_licence",
+    "input_licences",
+    "is_unrooted",
+    "licence_tier",
     "BatchResult",
     "MemberResult",
     "TRUST",

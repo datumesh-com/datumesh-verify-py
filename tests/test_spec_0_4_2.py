@@ -433,11 +433,12 @@ class MeshVersionsTest(unittest.TestCase):
 class CodesTest(unittest.TestCase):
     def test_codes(self) -> None:
         codes = datumesh.ERROR_CODES
-        self.assertEqual(codes[codes.index("E_MESH_DOC") + 1:], ("E_SLICE_AT_CELL", "E_NAME_UNBOUND"))
+        # spec-0.4.3 appends E_FOREIGN_UNAVAILABLE after them
+        self.assertEqual(codes[codes.index("E_MESH_DOC") + 1:codes.index("E_MESH_DOC") + 3],
+                         ("E_SLICE_AT_CELL", "E_NAME_UNBOUND"))
 
     def test_version(self) -> None:
-        self.assertEqual(datumesh.SPEC_VERSION, "spec-0.4.2")
-        self.assertEqual(datumesh.__version__, "0.4.2")
+        # the version itself is test_api's (0.4.3 since spec-0.4.3)
         for name in ("check_batch", "BatchResult", "MemberResult"):
             self.assertIn(name, datumesh.__all__)
         self.assertIn("computed", datumesh.TRUST)

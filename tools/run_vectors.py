@@ -30,6 +30,13 @@ A ``batch`` vector (spec-0.4.2) runs through ``check_batch`` and outputs ``resul
 (per item ``{outcome, receipt_hash?, trust?}`` or ``{error}``) for a 200, ``outcome``
 for a refusal; a slice page outputs ``results`` for its members.
 
+Since spec-0.4.3: a ``keys`` vector outputs ``declarations`` when the document has them; a ``licence`` vector
+runs through ``inherit_licence`` and outputs ``licence`` (null for a refusal) and ``reason``; an
+``entitlement`` vector verifies its receipt and the input receipts with its ``keys`` (as the reference does),
+follows the receipt's ``inputs`` through ``receipts`` and ``manifests`` with ``input_licences``, takes K
+from the ``env`` of the host of ``cell.ns``, and outputs ``entitled`` and ``reason`` from
+``check_entitlement``.
+
 The kinds ``formula``, ``formula-eval``, ``excel``, ``decimal`` (spec-0.4.0) and
 ``call`` (spec-0.4.2) are for implementations of the formula dialect, not verifier
 libraries: this library evaluates no
@@ -114,6 +121,8 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
                 out["error"] = r.code
             else:
                 out.update(key_ids=list(r.key_ids))
+                if r.declarations is not None:  # spec-0.4.3
+                    out["declarations"] = r.declarations_json()
         elif kind == "receipt":
             keys: List[datumesh.KeysResult] = [_env_keys(h, e) for h, e in (v.get("keys") or {}).items()]
             blob = bytes.fromhex(v["blob_hex"]) if "blob_hex" in v else None
@@ -186,6 +195,22 @@ def run_vector(v: Dict[str, Any]) -> Dict[str, Any]:
                             r.update(receipt_hash=item.receipt_hash, trust=item.trust)
                         results.append(r)
                 out["results"] = results
+        elif kind == "licence":  # spec-0.4.3
+            res = datumesh.inherit_licence(v["licences"], v.get("declarations"), v["fn"], v["issued"],
+                                           v["mesh_licence"])
+            out.update(licence=res.licence, reason=res.reason)
+        elif kind == "entitlement":  # spec-0.4.3
+            envs = v.get("keys") or {}
+            keys = [_env_keys(h, e) for h, e in envs.items()]
+            res = datumesh.verify(_input(v), keys)
+            if not res.ok:
+                out["error"] = res.code
+            else:
+                licences = datumesh.input_licences(_input(v), v.get("receipts") or {}, v.get("manifests"), keys)
+                host = json.loads(_input(v))["cell"]["ns"].split("/")[0]
+                k = _env_keys(host, envs.get(host) or {})
+                ent = datumesh.check_entitlement(_input(v), licences, k)
+                out.update(entitled=ent.entitled, reason=ent.reason)
         else:
             out["error"] = f"UNSUPPORTED_KIND:{kind}"
     except datumesh.DatumeshError as e:

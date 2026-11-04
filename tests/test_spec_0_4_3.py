@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import json
 import unittest
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from util import ROOT, env_keys
 

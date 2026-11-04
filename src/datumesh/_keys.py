@@ -8,7 +8,8 @@ import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, Union
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from . import _lexical as lx
 from ._errors import DatumeshError, fail
@@ -45,12 +46,41 @@ class Key:
 
 
 @dataclass(frozen=True)
+class Declaration:
+    """One entry of a key document's ``declarations`` (SPEC 9.2, spec-0.4.3): the publisher permits its function
+    to be computed over inputs under ``licence`` (a restricted licence, 8.5) from ``valid_from`` until
+    ``valid_to`` (None: open-ended)."""
+
+    licence: str
+    valid_from: str
+    valid_to: Optional[str] = None
+
+    def open_at(self, issued: str) -> bool:
+        """SPEC 8.5 step 4, as a key's window (9.5): ``valid_from <= issued`` and, if present, ``issued < valid_to``."""
+        return self.valid_from <= issued and (self.valid_to is None or issued < self.valid_to)
+
+    def as_dict(self) -> Dict[str, str]:
+        """The entry as the key document writes it."""
+        d = {"licence": self.licence, "valid_from": self.valid_from}
+        if self.valid_to is not None:
+            d["valid_to"] = self.valid_to
+        return d
+
+
+#: A key document's declarations: full function name to its entries, in document order.
+Declarations = Mapping[str, Tuple[Declaration, ...]]
+
+
+@dataclass(frozen=True)
 class KeysResult:
     """The outcome of resolving a host's keys (SPEC 9.3).
 
     ``ok`` is True and ``code`` is ``"OK"`` when ``keys`` holds the host's
     validated keys; otherwise ``code`` is ``E_KEY_UNAVAILABLE`` or ``E_KEY_DOC``
     and ``keys`` is empty. ``host`` is the host the keys belong to.
+    ``declarations`` (spec-0.4.3): the document's ``declarations`` (SPEC 9.2), a read-only mapping from full
+    function name to a tuple of :class:`Declaration`, or None when the document has none (or is not ok).
+    They change nothing in verification.
     """
 
     ok: bool
@@ -58,21 +88,70 @@ class KeysResult:
     host: Optional[str]
     detail: str = ""
     keys: Tuple[Key, ...] = field(default_factory=tuple)
+    declarations: Optional[Declarations] = field(default=None, hash=False)
 
     @property
     def key_ids(self) -> Tuple[str, ...]:
         return tuple(k.id for k in self.keys)
+
+    def declarations_json(self) -> Optional[Dict[str, List[Dict[str, str]]]]:
+        """The declarations as the document gives them (a ``keys`` vector's output), or None."""
+        if self.declarations is None:
+            return None
+        return {name: [e.as_dict() for e in entries] for name, entries in self.declarations.items()}
 
 
 def _doc_error(host: Optional[str], detail: str) -> KeysResult:
     return KeysResult(False, "E_KEY_DOC", host, detail)
 
 
+def declaration_entries(entries: Any, path: str) -> Tuple[Declaration, ...]:
+    """One declared name's entries (SPEC 9.2): an array of 1 to 16 objects with exactly ``licence`` (8.1),
+    ``valid_from`` and optionally ``valid_to`` (instants, ``valid_to`` later), all strings. Raises
+    DatumeshError (the caller maps it to E_KEY_DOC)."""
+    if not isinstance(entries, list) or not 1 <= len(entries) <= lx.LIMIT_DECLARATION_ENTRIES:
+        fail("E_SCHEMA", f"a declared name has an array of 1 to {lx.LIMIT_DECLARATION_ENTRIES} entries", path)
+    out = []
+    for i, e in enumerate(entries):
+        p = f"{path}[{i}]"
+        require_object(e, p, ("licence", "valid_from"), ("valid_to",))
+        for name in ("licence", "valid_from", "valid_to"):
+            if name in e and not isinstance(e[name], str):
+                fail("E_SCHEMA", f"{name} must be a string", f"{p}.{name}")
+        lx.check_licence(e["licence"], f"{p}.licence")
+        lx.check_instant(e["valid_from"], f"{p}.valid_from")
+        valid_to = e.get("valid_to")
+        if valid_to is not None:
+            lx.check_instant(valid_to, f"{p}.valid_to")
+            if not valid_to > e["valid_from"]:
+                fail("E_SCHEMA", "valid_to must be later than valid_from", f"{p}.valid_to")
+        out.append(Declaration(e["licence"], e["valid_from"], valid_to))
+    return tuple(out)
+
+
+def _declarations(v: Any, doc_host: str) -> Declarations:
+    """SPEC 9.2 (spec-0.4.3): ``declarations`` is an object of 1 to 64 members, each a full function name (2.3)
+    whose namespace's host is ``doc_host`` exactly (a subdomain is another host)."""
+    if not isinstance(v, dict) or not 1 <= len(v) <= lx.LIMIT_DECLARATIONS:
+        fail("E_SCHEMA", f"declarations is an object of 1 to {lx.LIMIT_DECLARATIONS} function names",
+             "$.declarations")
+    out: Dict[str, Tuple[Declaration, ...]] = {}
+    for name, entries in v.items():
+        p = f"$.declarations[{name!r}]"
+        lx.check_function_name(name, p)
+        if lx.host_of(name) != doc_host:
+            fail("E_SCHEMA", f"{name!r} is not a function under the document's host {doc_host!r}", p)
+        out[name] = declaration_entries(entries, p)
+    return MappingProxyType(out)
+
+
 def validate_key_document(doc: Any, host: Optional[str]) -> KeysResult:
     """Check a parsed key document against SPEC 9.2. ``host`` is the host it was
-    fetched from (None: take the document's own ``host`` member)."""
+    fetched from (None: take the document's own ``host`` member). The optional
+    ``declarations`` (spec-0.4.3) are checked with the rest: anything malformed
+    rejects the whole document (E_KEY_DOC)."""
     try:
-        require_object(doc, "$", ("host", "keys", "proto"))
+        require_object(doc, "$", ("host", "keys", "proto"), ("declarations",))
         if doc["proto"] != PROTO:
             fail("E_SCHEMA", f"proto must be {PROTO!r}", "$.proto")
         doc_host = doc["host"]
@@ -110,7 +189,8 @@ def validate_key_document(doc: Any, host: Optional[str]) -> KeysResult:
             seen_ids.add(entry["id"])
             seen_public.add(entry["public"])
             out.append(Key(entry["id"], entry["public"], entry["valid_from"], valid_to))
-        return KeysResult(True, "OK", doc_host, "", tuple(out))
+        decls = _declarations(doc["declarations"], doc_host) if "declarations" in doc else None
+        return KeysResult(True, "OK", doc_host, "", tuple(out), decls)
     except DatumeshError as e:
         where = f" at {e.path}" if e.path else ""
         return _doc_error(host if host is not None else (doc.get("host") if isinstance(doc, dict) and isinstance(doc.get("host"), str) else None),

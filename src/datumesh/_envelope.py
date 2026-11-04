@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Mapping, NoReturn, Optional, Sequence, Tuple
 from . import _lexical as lx
 from . import _model
 from . import _units
-from ._errors import ERROR_CODES, FAULT_CODES, DatumeshError, fail
+from ._errors import ERROR_CODES, FAULT_CODES, FOREIGN_DETAILS, DatumeshError, fail
 from ._json import jcs_bytes, number_tree, numbers_of, parse_json
 from ._keys import _Source, key_sources
 from ._verify import _signed
@@ -25,7 +25,7 @@ OUTCOMES: Dict[str, Tuple[range, Tuple[str, ...], Tuple[str, ...]]] = {
     "payment_required": (range(402, 403), ("quote",), ("fn_hash",)),
     "rate_limited": (range(429, 430), ("retry_after_seconds",), ("fn_hash",)),
     "bad_request": (range(400, 401), ("error",), ("fn_hash",)),
-    "error": (range(500, 600), ("error",), ("fn_hash",)),
+    "error": (range(500, 600), ("error",), ("detail", "fn_hash")),  # detail: spec-0.4.3
     "pending": (range(202, 203), ("estimate_seconds", "job", "poll", "request"), ()),  # spec-0.4.1
 }
 #: A page of the slice endpoint (SPEC 5.6, spec-0.4.2): an ``ok`` with these members instead.
@@ -51,6 +51,9 @@ LIMIT_NEXT = 512
 #: The trust values (SPEC 5.5); ``computed`` since spec-0.4.2.
 TRUST = ("primary", "verified", "unverified", "computed")
 MAX_SECONDS = 2 ** 53 - 1
+#: spec-0.4.3: a foreign mesh could not be reached; an ``error`` envelope's code, with ``detail``, at HTTP 502.
+FOREIGN = "E_FOREIGN_UNAVAILABLE"
+FOREIGN_STATUS = 502
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,9 @@ class EnvelopeResult:
     echoes (or None); ``error``, the code an ``error``, ``bad_request`` or ``not_covered``
     envelope carries (``E_NAME_UNBOUND`` for the last); and for a page of the slice
     endpoint, ``members`` (a :class:`MemberResult` per member, in order) and ``next``.
+    ``error_detail`` (spec-0.4.3): with ``E_FOREIGN_UNAVAILABLE``, the envelope's ``detail`` (one of
+    ``FOREIGN_DETAILS``: why the foreign mesh could not be reached); else None. (``detail`` is this result's
+    human-readable text, as before.)
     """
 
     ok: bool
@@ -99,6 +105,7 @@ class EnvelopeResult:
     error: Optional[str] = None
     members: Tuple[MemberResult, ...] = ()
     next: Optional[str] = None
+    error_detail: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -212,10 +219,15 @@ def _members(env: Any, numbers: Dict[str, str], path: str, at_slice: bool, membe
         _bad("reason is only present with superseded_by", f"{path}.reason")
     if "fault" in env and "error" in env:
         _bad("not_covered carries fault or error, not both", f"{path}.error")
+    if (env.get("error") == FOREIGN) != ("detail" in env):  # spec-0.4.3
+        _bad("detail is present exactly when error is E_FOREIGN_UNAVAILABLE", f"{path}.detail")
     for name in sorted(env):  # JCS order (all names are ASCII)
         v, p = env[name], f"{path}.{name}"
         if name in ("age_seconds", "retry_after_seconds", "estimate_seconds"):
             _seconds(v, numbers.get(name), p)
+        elif name == "detail":
+            if not isinstance(v, str) or v not in FOREIGN_DETAILS:
+                _bad(f"detail is one of {', '.join(FOREIGN_DETAILS)}", p)
         elif name == "error":
             if outcome == "bad_request":
                 allowed_codes = BAD_REQUEST_CODES | {"E_JOB_UNKNOWN"}
@@ -391,6 +403,9 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
         _bad("a batch is refused whole only by a refusal outcome", f"{path}.outcome")
     if isinstance(status, bool) or not isinstance(status, int) or status not in OUTCOMES[outcome][0]:
         _bad(f"HTTP status {status!r} does not match outcome {outcome!r}", "status" if path == "$" else path)
+    if env.get("error") == FOREIGN and status != FOREIGN_STATUS:  # spec-0.4.3
+        _bad(f"E_FOREIGN_UNAVAILABLE is answered with HTTP {FOREIGN_STATUS}, not {status}",
+             "status" if path == "$" else path)
     # step 3a (SPEC 5.5, a468606): what the request decides without the receipt, in this order
     if env.get("error") == "E_JOB_UNKNOWN" and req.job is None:
         _bad("E_JOB_UNKNOWN answers a job URL only, not a /cell request", f"{path}.error")
@@ -435,12 +450,13 @@ def _check_parsed(status: Any, env_v: Any, tree: Any, sources: Tuple[_Source, ..
     fault, error = env.get("fault"), env.get("error")
     detail = "well-formed envelope" + ("; receipt signature-valid" if h else "") + (
         f"; evaluation fault {fault}" if fault else "") + (f"; job {env['job']}" if outcome == "pending" else "") + (
-        f"; a page of {len(members)} members" if page else "")
+        f"; a page of {len(members)} members" if page else "") + (
+        f"; foreign mesh unavailable ({env['detail']})" if "detail" in env else "")
     if outcome == "pending":
         return EnvelopeResult(True, "OK", outcome, None, None, detail, None, None, env["job"],
                               int(numbers_of(tree)["estimate_seconds"]), env["poll"])
     return EnvelopeResult(True, "OK", outcome, trust, h, detail, None, fault, None, None, None, env.get("fn_hash"),
-                          error, members, env.get("next"))
+                          error, members, env.get("next"), env.get("detail"))
 
 
 def _check_page(env: Dict[str, Any], tree: Any, sources: Tuple[_Source, ...], req: _Request,
